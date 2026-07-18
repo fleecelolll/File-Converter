@@ -6,17 +6,23 @@ A little tool I made with AI to quickly convert common image, audio, video, arch
 
 </div>
 
+<p align="center">
+  <img src="File Converter.png" alt="file converter" width="673">
+</p>
+
 ## features
 
-- convert PNG, JPG, WEBP, BMP, ICO, GIF, TIFF, TGA, AVIF, HEIC, and HEIF images
-- preserve image animation automatically when the output format supports it
-- convert MP3, WAV, FLAC, OGG, M4A, and AAC audio
-- convert MP4, MKV, WEBM, MOV, and AVI video or extract its audio
-- copy compatible media streams without re-encoding for faster conversions with no quality loss
-- convert ZIP, 7Z, TAR, TAR.GZ, TGZ, and GZ archives
-- create archives from selected files, a folder, or mixed files and folders through drag and drop
-- swap BAT/CMD and PY/PYW extensions without changing the file contents
+- convert common image, audio, video, archive, and script formats
+- preserve image animation when the output format supports it
+- copy compatible media streams without re-encoding or quality loss
+- extract audio from video files
+- convert existing archives or create new archives from files and folders
+- swap BAT/CMD and PY/PYW extensions without changing file contents
+- choose the output folder
+- follow progress in the built-in log
 - process every file locally without uploads or telemetry
+
+Supported images include PNG, JPG, WEBP, BMP, ICO, GIF, TIFF, TGA, AVIF, HEIC, and HEIF. Audio and video conversion uses FFmpeg. Archives support ZIP, 7Z, TAR, TAR.GZ, TGZ, and GZ.
 
 ## installation
 

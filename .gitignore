@@ -1,7 +1,6 @@
 .venv/
 .runtime/
 .setup-temp/
-.test-*/
 setup.log
 __pycache__/
 *.py[cod]

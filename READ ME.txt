@@ -42,8 +42,10 @@ REMOVE
 
 Close the app and delete this folder. That removes the private Python environment, FFmpeg, and the app files. A Python installation added through winget may remain in your user environment.
 
-SOURCE
+SOURCE AND RESPONSIBLE USE
 
 Source: https://github.com/fleecelolll/File-Converter
 
 This project was made with AI.
+
+BAT/CMD and PY/PYW swaps only change the extension. They do not translate the script or change its contents.

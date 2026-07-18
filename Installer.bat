@@ -13,6 +13,7 @@ shift
 goto ParseArguments
 
 :ArgumentsReady
+
 set "ROOT=%~dp0"
 set "APP_FILE=%ROOT%File Converter.pyw"
 set "LOG=%ROOT%setup.log"
@@ -64,8 +65,8 @@ echo  ==================================================
 echo                 FILE CONVERTER SETUP
 echo  ==================================================
 echo.
-echo   This keeps the app and its dependencies inside
-echo   this folder. It does not need administrator access.
+echo   App-specific components stay inside this folder.
+echo   It does not need administrator access.
 echo.
 echo      Python environment     runs the app
 echo      PySide6                the app window
@@ -84,7 +85,7 @@ if not exist "%APP_FILE%" (
 )
 
 echo.
-echo   [ STEP 1 / 4 ]   Private Python environment
+echo   [ STEP 1 / 5 ]   Private Python environment
 echo.
 call :ValidateVenv
 if not errorlevel 1 (
@@ -147,19 +148,31 @@ if errorlevel 1 (
 echo      Done.
 
 echo.
-echo   [ STEP 2 / 4 ]   App components
+echo   [ STEP 2 / 5 ]   App components
 echo.
 echo      Installing or updating trusted packages from PyPI...
 echo      Existing components are reused whenever possible.
-call :InstallPackages
+call :InstallPySide
 if errorlevel 1 (
-    set "FAIL_MESSAGE=One or more Python components could not be installed or verified."
+    set "FAIL_MESSAGE=PySide6 could not be installed or verified."
     goto Failed
 )
 echo      Done.
 
 echo.
-echo   [ STEP 3 / 4 ]   FFmpeg and ffprobe
+echo   [ STEP 3 / 5 ]   File formats
+echo.
+echo      Installing or updating trusted packages from PyPI...
+echo      Existing components are reused whenever possible.
+call :InstallFormats
+if errorlevel 1 (
+    set "FAIL_MESSAGE=Image and archive components could not be installed or verified."
+    goto Failed
+)
+echo      Done.
+
+echo.
+echo   [ STEP 4 / 5 ]   FFmpeg and FFprobe
 echo.
 call :ValidateFfmpeg
 if errorlevel 1 goto InstallFfmpegNow
@@ -171,14 +184,14 @@ goto FfmpegReady
 echo      Downloading the verified FFmpeg tools...
 call :InstallFfmpeg
 if errorlevel 1 (
-    set "FAIL_MESSAGE=FFmpeg or ffprobe could not be installed or verified."
+    set "FAIL_MESSAGE=FFmpeg or FFprobe could not be installed or verified."
     goto Failed
 )
 :FfmpegReady
 echo      Done.
 
 echo.
-echo   [ STEP 4 / 4 ]   Final checks
+echo   [ STEP 5 / 5 ]   Final checks
 echo.
 echo      Testing every required component and conversion type...
 call :VerifyEverything
@@ -309,14 +322,34 @@ if not exist "%VENV_PYW%" exit /b 1
 "%VENV_PY%" -I -c "import sys, struct; ok = sys.implementation.name == 'cpython' and (3, 10) <= sys.version_info[:2] < (3, 15) and struct.calcsize('P') == 8 and sys.prefix != sys.base_prefix; raise SystemExit(0 if ok else 1)" >>"%LOG%" 2>&1
 exit /b %ERRORLEVEL%
 
-:InstallPackages
+:InstallPySide
 call :ValidateVenv
 if errorlevel 1 exit /b 1
 "%VENV_PY%" -I -m pip --isolated --disable-pip-version-check install --upgrade --no-cache-dir --only-binary=:all: --index-url "%PYPI_INDEX%" pip >>"%LOG%" 2>&1
 if errorlevel 1 exit /b 1
-"%VENV_PY%" -I -m pip --isolated --disable-pip-version-check install --upgrade --no-cache-dir --only-binary=:all: --index-url "%PYPI_INDEX%" "PySide6==%PYSIDE_VERSION%" "Pillow==%PILLOW_VERSION%" "pillow-heif==%PILLOW_HEIF_VERSION%" "py7zr==%PY7ZR_VERSION%" >>"%LOG%" 2>&1
+"%VENV_PY%" -I -m pip --isolated --disable-pip-version-check install --upgrade --no-cache-dir --only-binary=:all: --index-url "%PYPI_INDEX%" "PySide6==%PYSIDE_VERSION%" >>"%LOG%" 2>&1
 if errorlevel 1 exit /b 1
-call :VerifyPackages
+call :VerifyPySide
+exit /b %ERRORLEVEL%
+
+:VerifyPySide
+if not exist "%VENV_PY%" exit /b 1
+"%VENV_PY%" -I -c "import PySide6; from importlib.metadata import version; assert version('PySide6') == '%PYSIDE_VERSION%'; print('PySide6=' + version('PySide6'))" >>"%LOG%" 2>&1
+exit /b %ERRORLEVEL%
+
+:InstallFormats
+call :ValidateVenv
+if errorlevel 1 exit /b 1
+"%VENV_PY%" -I -m pip --isolated --disable-pip-version-check install --upgrade --no-cache-dir --only-binary=:all: --index-url "%PYPI_INDEX%" "Pillow==%PILLOW_VERSION%" "pillow-heif==%PILLOW_HEIF_VERSION%" "py7zr==%PY7ZR_VERSION%" >>"%LOG%" 2>&1
+if errorlevel 1 exit /b 1
+call :VerifyFormats
+exit /b %ERRORLEVEL%
+
+:VerifyFormats
+if not exist "%VENV_PY%" exit /b 1
+"%VENV_PY%" -I -c "import PIL, py7zr, pillow_heif; from PIL import Image, features; from importlib.metadata import version; pillow_heif.register_heif_opener(); assert version('Pillow') == '%PILLOW_VERSION%'; assert version('pillow-heif') == '%PILLOW_HEIF_VERSION%'; assert version('py7zr') == '%PY7ZR_VERSION%'; assert features.check('webp'); assert features.check('avif'); assert Image.registered_extensions().get('.heic') == 'HEIF'; print('Pillow=' + version('Pillow')); print('pillow-heif=' + version('pillow-heif')); print('py7zr=' + version('py7zr')); print('WEBP, AVIF, and HEIC support=available')" >>"%LOG%" 2>&1
+if errorlevel 1 exit /b 1
+"%VENV_PY%" -I -m pip --isolated --disable-pip-version-check check >>"%LOG%" 2>&1
 exit /b %ERRORLEVEL%
 
 :VerifyPackages
