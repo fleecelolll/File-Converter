@@ -1,0 +1,49 @@
+FLEECE FILE CONVERTER
+
+INSTALL
+
+1. Extract the whole folder from the ZIP. Do not run it from inside the ZIP.
+2. Double-click Installer.bat and leave the window open until every check passes.
+
+You do not need to run the installer as administrator.
+
+USE
+
+Double-click File Converter.pyw, choose a category, choose a file, select the output format, choose the output folder, and click Convert.
+
+In the Archives category, Browse lets you choose multiple files or one folder. You can also drag files and folders into the app to package them together. Selecting one existing archive converts it to another archive format.
+
+Image animation is preserved automatically when the output format supports it. Audio and video streams are copied without re-encoding when they are compatible with the selected format. FFmpeg performs a normal conversion when direct copying is not compatible.
+
+BAT/CMD and PY/PYW swaps only change the extension. They do not translate the script or change its contents. The original input is never overwritten.
+
+UPDATES
+
+Run Installer.bat again to repair FFmpeg, the private Python environment, or the app components.
+
+WHAT THE INSTALLER ADDS
+
+- A private .venv folder keeps PySide6, Pillow, pillow-heif, and py7zr separate from globally installed Python packages.
+- If compatible 64-bit Python 3.10 through 3.14 is unavailable, setup can install Python 3.13 for the current Windows user through winget.
+- Verified FFmpeg and FFprobe programs are stored inside .runtime.
+- The FFmpeg archive is verified against a pinned SHA-256 checksum.
+
+PRIVACY
+
+The app contains no telemetry, analytics, accounts, or usage tracking. Files are processed locally and are never uploaded. Installer.bat connects only to the setup sources described above.
+
+TROUBLESHOOTING
+
+If setup fails, check your internet connection and run Installer.bat again. Details are saved in setup.log. The log can include local folder paths, so review it before sharing it.
+
+If File Converter.pyw does not open, rerun Installer.bat and make sure every final check passes. Keep Installer.bat and File Converter.pyw together in the same folder.
+
+REMOVE
+
+Close the app and delete this folder. That removes the private Python environment, FFmpeg, and the app files. A Python installation added through winget may remain in your user environment.
+
+SOURCE
+
+Source: https://github.com/fleecelolll/File-Converter
+
+This project was made with AI.
