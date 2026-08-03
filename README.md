@@ -2,7 +2,7 @@
 
 # file converter
 
-A little tool I made with AI to quickly convert common image, audio, video, archive, and script files on 64-bit Windows.
+A little tool I made with AI to quickly convert common image, audio, video, archive, and script files locally on 64-bit Windows.
 
 </div>
 
