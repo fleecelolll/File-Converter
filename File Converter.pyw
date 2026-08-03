@@ -23,6 +23,7 @@ from typing import Callable, Optional
 
 APP_DIR = Path(__file__).resolve().parent
 VENV_ROOT = APP_DIR / ".venv"
+VENV_PY = VENV_ROOT / "Scripts" / "python.exe"
 VENV_PYW = VENV_ROOT / "Scripts" / "pythonw.exe"
 APP_TITLE = "File Converter"
 
@@ -43,7 +44,7 @@ def bootstrap_local_python():
     if running_locally:
         return
 
-    if not VENV_PYW.is_file():
+    if not VENV_PY.is_file() or not VENV_PYW.is_file():
         show_native_setup_error(
             "Setup is missing or incomplete.\n\n"
             "Run Installer.bat, let it finish, then open this file again."
@@ -51,12 +52,30 @@ def bootstrap_local_python():
         raise SystemExit(1)
 
     try:
+        environment_check = subprocess.run(
+            [
+                str(VENV_PY),
+                "-I",
+                "-c",
+                "from pathlib import Path; import sys; "
+                "ok = sys.prefix != sys.base_prefix and "
+                "Path(sys.prefix).resolve() == Path(sys.argv[1]).resolve(); "
+                "raise SystemExit(0 if ok else 1)",
+                str(VENV_ROOT),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if environment_check.returncode != 0:
+            raise OSError("The private Python environment is not usable.")
         subprocess.Popen(
             [str(VENV_PYW), str(Path(__file__).resolve()), *sys.argv[1:]],
             cwd=str(APP_DIR),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         show_native_setup_error(
             "The app's Python could not start.\n\n"
             "Run Installer.bat again to repair the setup."
@@ -1285,9 +1304,19 @@ def write_archive(
 
 
 def is_link_or_junction(path: Path) -> bool:
-    return path.is_symlink() or (
-        hasattr(path, "is_junction") and path.is_junction()
-    )
+    if path.is_symlink():
+        return True
+
+    is_junction = getattr(path, "is_junction", None)
+    if is_junction is not None:
+        return is_junction()
+
+    if os.name != "nt":
+        return False
+    try:
+        return path.lstat().st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+    except (AttributeError, OSError):
+        return False
 
 
 def stage_archive_sources(
