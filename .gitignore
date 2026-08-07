@@ -2,5 +2,6 @@
 .runtime/
 .setup-temp/
 setup.log
+*.lnk
 __pycache__/
 *.py[cod]

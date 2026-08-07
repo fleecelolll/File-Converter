@@ -4,14 +4,21 @@ File Converter runs locally on 64-bit Windows.
 
 INSTALL
 
-1. Extract the whole folder from the ZIP. Do not run it from inside the ZIP.
-2. Double-click Installer.bat and leave the window open until every check passes.
+1. Keep every included file together in the extracted folder.
 
-You do not need to run the installer as administrator.
+2. Double click Installer.bat.
+
+3. Let setup finish every check. The first run can take a few minutes.
+
+4. Double click the "File Converter" shortcut that setup creates in this folder.
+
+You can copy that shortcut to your Desktop or pin it to the taskbar. The shortcut launches the app with its own private Python environment.
+
+Run Installer.bat again whenever setup needs repair or after moving the folder to a different location so the shortcut can be refreshed. Always open the File Converter shortcut, not File Converter.pyw.
 
 USE
 
-Double-click File Converter.pyw, choose a category, choose a file, select the output format, choose the output folder, and click Convert.
+Double-click the "File Converter" shortcut, choose a category, choose a file, select the output format, choose the output folder, and click Convert.
 
 In the Archives category, Browse lets you choose multiple files or one folder. You can also drag files and folders into the app to package them together. Selecting one existing archive converts it to another archive format.
 
@@ -21,28 +28,55 @@ BAT/CMD and PY/PYW swaps only change the extension. They do not translate the sc
 
 UPDATES
 
-Run Installer.bat again to repair FFmpeg, the private Python environment, or the app components.
+Run Installer.bat again to repair or update FFmpeg and the private app components. Setup keeps your files and recreates the shortcut for the folder's current location.
 
 WHAT THE INSTALLER ADDS
 
-- A private .venv folder keeps PySide6, Pillow, pillow-heif, and py7zr separate from globally installed Python packages.
-- If compatible 64-bit Python 3.10 through 3.14 is unavailable, setup can install Python 3.13 for the current Windows user through winget.
-- Verified FFmpeg and FFprobe programs are stored inside .runtime.
-- The FFmpeg archive is verified against a pinned SHA-256 checksum.
+- Uses a compatible 64-bit Python 3.10 through 3.14 already on the PC when possible.
+
+- Otherwise offers to download official Python 3.14.7 privately into this folder.
+
+- Installs pinned PySide6, Pillow, pillow-heif, and py7zr components from official PyPI.
+
+- Stores verified FFmpeg and FFprobe programs inside .runtime.
+
+- Verifies downloaded private-runtime files with SHA-256 checksums.
+
+- Compiles the app source and runs local conversion self-tests.
+
+- Creates and validates a normal double-clickable shortcut for the app.
+
+- Installs one shared per-user Fleece Tools launcher here:
+
+  %LOCALAPPDATA%\Fleece Tools\Python Launcher
+
+- Sets .pyw files to use that shared launcher for your Windows account.
+
+The launcher first looks for .venv\Scripts\pythonw.exe beside the selected .pyw file, then .runtime\python\pythonw.exe beside it. It never uses another tool's private Python.
+
+Before the first Fleece Tools association change, setup exports existing per-user .pyw settings into the shared launcher folder. If setup cannot safely save an existing non-Fleece setting, it stops without overwriting it. If you choose a different .pyw app later, future setup runs leave that newer choice alone.
+
+Setup does not need administrator access, change PATH, install global Python packages, or install a background service.
 
 PRIVACY
 
-The app contains no telemetry, analytics, accounts, or usage tracking. Files are processed locally and are never uploaded. Installer.bat connects only to the setup sources described above.
+The app contains no telemetry, analytics, accounts, advertisements, or usage tracking. Files are processed locally and are never uploaded. The app makes no runtime network requests. Installer.bat connects only to the setup sources described above.
 
 TROUBLESHOOTING
 
 If setup fails, check your internet connection and run Installer.bat again. Details are saved in setup.log. The log can include local folder paths, so review it before sharing it.
 
-If File Converter.pyw does not open, rerun Installer.bat and make sure every final check passes. Keep Installer.bat and File Converter.pyw together in the same folder.
+If the File Converter shortcut does not open, rerun Installer.bat and make sure every final check passes. Setup recreates and validates the shortcut for the folder's current location. Keep the complete folder together.
 
 REMOVE
 
-Close the app and delete this folder. That removes the private Python environment, FFmpeg, and the app files. A Python installation added through winget may remain in your user environment.
+To remove only File Converter, close the app and delete this folder. That removes the private Python environment, FFmpeg, and the app files. The app does not add itself to startup, install a Windows service, or create an uninstaller entry.
+
+The shared .pyw launcher can be used by every Fleece Tool, so deleting one tool does not remove it. To restore the .pyw settings that existed before Fleece Tools first changed them, run:
+
+  %LOCALAPPDATA%\Fleece Tools\Python Launcher\Restore pyw association.cmd
+
+The restore helper stops without overwriting a newer non-Fleece choice. After restoring, and after removing every Fleece Tool that uses the launcher, you can delete the shared Python Launcher folder. Its registry backup files can include local program names and paths, so review them before sharing.
 
 SOURCE AND RESPONSIBLE USE
 
