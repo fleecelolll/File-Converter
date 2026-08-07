@@ -26,16 +26,18 @@ Supported images include PNG, JPG, WEBP, BMP, ICO, GIF, TIFF, TGA, AVIF, HEIC, a
 
 ## installation
 
-1. download the latest ZIP from the [releases page](../../releases/latest)
-2. extract the folder
-3. run `Installer.bat`
-4. open `File Converter.pyw`
+1. Download and extract the release ZIP.
+2. Double-click `Installer.bat`.
+3. Let every setup check pass.
+4. Double-click the `File Converter` shortcut created in the folder.
 
-The download contains only the installer and app. Setup creates a private `.venv` for the required Python packages and downloads verified FFmpeg tools into a private `.runtime` folder. It does not require administrator access.
+The setup keeps the app runtime, verified FFmpeg tools, and Python packages inside the extracted folder. It does not need administrator access. It also installs one small shared launcher in `%LOCALAPPDATA%\Fleece Tools\Python Launcher` and sets `.pyw` files to open with it for your Windows account. The launcher always uses the selected tool's sibling `.venv\Scripts\pythonw.exe`, then its sibling `.runtime\python\pythonw.exe`. It does not change PATH, install global Python packages, or use another tool's private Python. You can copy the shortcut to your Desktop or pin it to the taskbar.
 
-If compatible 64-bit Python 3.10 through 3.14 is already installed, setup uses it to create the private environment. If Python is unavailable, setup can install Python 3.13 for the current Windows user through winget.
+Before the first Fleece Tools association change, setup exports any existing per-user `.pyw` settings to that shared folder. If the previous setting cannot be backed up safely, setup stops without overwriting it. A later non-Fleece choice is also left alone.
 
-The FFmpeg archive is checked against a pinned SHA-256 checksum. Run `Installer.bat` again whenever you want to repair the private environment or downloaded components.
+If compatible 64-bit Python 3.10 through 3.14 is already installed, setup uses it to create a private `.venv`. Otherwise, setup can download official Python 3.14.7 privately into this folder. Python, pip, PySide6, Pillow, pillow-heif, py7zr, FFmpeg, and FFprobe are pinned and validated. Downloaded runtime archives are checked against pinned SHA-256 checksums.
+
+Run `Installer.bat` again whenever you want to repair or update the private components. Run it again after moving the extracted folder so the shortcut is recreated for the folder's new location. Always open the `File Converter` shortcut, not `File Converter.pyw`.
 
 ## usage
 
@@ -60,7 +62,11 @@ Animation preservation and compatible media stream copying happen automatically.
 
 ## privacy and removal
 
-The app has no telemetry, analytics, accounts, or usage tracking. Files are processed locally and are never uploaded. To remove everything installed specifically for the app, close it and delete its folder. A Python installation added through winget may remain in your user environment.
+The app has no telemetry, analytics, accounts, or usage tracking. Files are processed locally and are never uploaded. The app makes no runtime network requests.
+
+To remove only File Converter, close it and delete the extracted folder. The app does not install a background service, add itself to startup, or create an uninstaller entry.
+
+The shared `.pyw` launcher is used by every installed Fleece Tool, so removing one tool does not remove it. To restore the `.pyw` settings that existed before Fleece Tools first configured them, run `%LOCALAPPDATA%\Fleece Tools\Python Launcher\Restore pyw association.cmd`. The restore helper refuses to overwrite a newer non-Fleece choice. After restoring, and after removing every Fleece Tool that uses it, you can delete the shared `Python Launcher` folder. The registry backup files can contain local application names and paths, so review them before sharing.
 
 ## note
 
