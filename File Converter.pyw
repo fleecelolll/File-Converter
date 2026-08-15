@@ -32,7 +32,7 @@ EMBEDDED_PY = RUNTIME_DIR / "python" / "python.exe"
 EMBEDDED_PYW = RUNTIME_DIR / "python" / "pythonw.exe"
 SETUP_LOCK_DIR = RUNTIME_DIR / "setup.lock"
 APP_TITLE = "File Converter"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 APP_MUTEX_NAMES = (
     r"Global\FleeceFileConverterApp",
     r"Local\FleeceFileConverterApp",
@@ -1610,7 +1610,7 @@ def convert_file(
 
 
 def run_self_test(folder: Path) -> int:
-    assert APP_VERSION == "1.0.2"
+    assert APP_VERSION == "1.0.3"
     folder.mkdir(parents=True, exist_ok=True)
 
     if NATIVE_KERNEL32 is not None:
