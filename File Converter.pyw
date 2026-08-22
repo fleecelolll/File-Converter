@@ -32,7 +32,7 @@ EMBEDDED_PY = RUNTIME_DIR / "python" / "python.exe"
 EMBEDDED_PYW = RUNTIME_DIR / "python" / "pythonw.exe"
 SETUP_LOCK_DIR = RUNTIME_DIR / "setup.lock"
 APP_TITLE = "File Converter"
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 APP_MUTEX_NAMES = (
     r"Global\FleeceFileConverterApp",
     r"Local\FleeceFileConverterApp",
@@ -60,7 +60,7 @@ def bootstrap_local_python():
             for path in (local_python, local_pythonw)
             if path.is_file()
         }
-        if current in valid_executables:
+        if current in valid_executables and sys.flags.isolated:
             return
         if not local_python.is_file() or not local_pythonw.is_file():
             continue
@@ -76,7 +76,12 @@ def bootstrap_local_python():
             if validation.returncode != 0:
                 continue
             subprocess.Popen(
-                [str(local_pythonw), str(Path(__file__).resolve()), *sys.argv[1:]],
+                [
+                    str(local_pythonw),
+                    "-I",
+                    str(Path(__file__).resolve()),
+                    *sys.argv[1:],
+                ],
                 cwd=str(APP_DIR),
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
@@ -137,6 +142,7 @@ try:
         QVBoxLayout,
         QWidget,
     )
+    from shiboken6 import delete as delete_qt_object
 except Exception:
     if __name__ == "__main__":
         show_native_setup_error(
@@ -1150,10 +1156,14 @@ def copy_limited(
 
 
 def validate_extracted_tree(root: Path):
+    entries = 0
     files = 0
     total = 0
     resolved_root = root.resolve()
     for path in root.rglob("*"):
+        entries += 1
+        if entries > MAX_ARCHIVE_FILES:
+            raise ValueError("The archive contains more than 20,000 entries.")
         if path.is_symlink() or (
             hasattr(path, "is_junction") and path.is_junction()
         ):
@@ -1182,12 +1192,16 @@ def extract_archive(
     source_extension = extension_for_path(source)
     seen = set()
     running_total = [0]
+    entry_count = 0
     file_count = 0
 
     if source_extension == ".zip":
         with zipfile.ZipFile(source, "r") as archive:
             for info in archive.infolist():
                 check_cancel(cancel_event)
+                entry_count += 1
+                if entry_count > MAX_ARCHIVE_FILES:
+                    raise ValueError("The archive contains more than 20,000 entries.")
                 target = safe_archive_destination(destination, info.filename, seen)
                 mode = (info.external_attr >> 16) & 0o170000
                 if mode == stat.S_IFLNK:
@@ -1207,8 +1221,11 @@ def extract_archive(
                     copy_limited(source_stream, output_stream, running_total, cancel_event)
     elif source_extension in {".tar", ".tar.gz", ".tgz"}:
         with tarfile.open(source, "r:*") as archive:
-            for member in archive.getmembers():
+            for member in archive:
                 check_cancel(cancel_event)
+                entry_count += 1
+                if entry_count > MAX_ARCHIVE_FILES:
+                    raise ValueError("The archive contains more than 20,000 entries.")
                 root_name = member.name.replace("\\", "/").strip("/")
                 if member.isdir() and root_name in {"", "."}:
                     continue
@@ -1240,6 +1257,9 @@ def extract_archive(
             entries = archive.list()
             for info in entries:
                 check_cancel(cancel_event)
+                entry_count += 1
+                if entry_count > MAX_ARCHIVE_FILES:
+                    raise ValueError("The archive contains more than 20,000 entries.")
                 root_name = info.filename.replace("\\", "/").strip("/")
                 if info.is_directory and root_name in {"", "."}:
                     continue
@@ -1404,21 +1424,26 @@ def stage_archive_sources(
         raise ValueError("Choose at least one file or folder to archive.")
 
     file_count = 0
+    entry_count = 0
     copied_total = [0]
     for source in resolved_sources:
         stack = [(source, destination / source.name)]
         while stack:
             check_cancel(cancel_event)
             current, target = stack.pop()
+            entry_count += 1
+            if entry_count > MAX_ARCHIVE_FILES:
+                raise ValueError("More than 20,000 archive entries were selected.")
             if is_link_or_junction(current):
                 raise ValueError("Links and junctions cannot be added to an archive.")
             if current.is_dir():
                 target.mkdir(parents=True, exist_ok=True)
-                children = sorted(
-                    current.iterdir(),
-                    key=lambda path: path.name.casefold(),
-                    reverse=True,
-                )
+                children = []
+                for child in current.iterdir():
+                    children.append(child)
+                    if entry_count + len(stack) + len(children) > MAX_ARCHIVE_FILES:
+                        raise ValueError("More than 20,000 archive entries were selected.")
+                children.sort(key=lambda path: path.name.casefold(), reverse=True)
                 stack.extend((child, target / child.name) for child in children)
             elif current.is_file():
                 file_count += 1
@@ -1610,7 +1635,7 @@ def convert_file(
 
 
 def run_self_test(folder: Path) -> int:
-    assert APP_VERSION == "1.0.3"
+    assert APP_VERSION == "1.0.4"
     folder.mkdir(parents=True, exist_ok=True)
 
     if NATIVE_KERNEL32 is not None:
@@ -1904,6 +1929,42 @@ def run_self_test(folder: Path) -> int:
         escape_path.unlink()
         raise RuntimeError("The archive path protection test failed.")
 
+    entry_limit_archive = folder / "entry-limit.zip"
+    with zipfile.ZipFile(entry_limit_archive, "w") as archive:
+        for index in range(4):
+            archive.writestr(f"directory-{index}/", b"")
+    entry_limit_source = folder / "entry-limit-source"
+    entry_limit_source.mkdir(exist_ok=True)
+    for index in range(3):
+        (entry_limit_source / f"directory-{index}").mkdir(exist_ok=True)
+    original_archive_limit = globals()["MAX_ARCHIVE_FILES"]
+    globals()["MAX_ARCHIVE_FILES"] = 3
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="file-converter-entry-limit-",
+            dir=folder,
+        ) as limited_destination:
+            try:
+                extract_archive(entry_limit_archive, Path(limited_destination))
+            except ValueError as error:
+                if "entries" not in str(error):
+                    raise RuntimeError("The extraction entry limit gave an unclear error.") from error
+            else:
+                raise RuntimeError("Archive directories bypassed the extraction entry limit.")
+        try:
+            create_archive_from_sources(
+                [entry_limit_source],
+                folder / "entry-limit-output.zip",
+                "ZIP archive (.zip)",
+            )
+        except ValueError as error:
+            if "entries" not in str(error):
+                raise RuntimeError("The creation entry limit gave an unclear error.") from error
+        else:
+            raise RuntimeError("Selected directories bypassed the archive entry limit.")
+    finally:
+        globals()["MAX_ARCHIVE_FILES"] = original_archive_limit
+
     batch_source = folder / "check.bat"
     batch_source.write_bytes(b"@echo off\r\necho file-converter-ok\r\n")
     batch_output = folder / "check.cmd"
@@ -1941,6 +2002,114 @@ def run_self_test(folder: Path) -> int:
         pass
     else:
         raise RuntimeError("The source overwrite test failed.")
+
+    application = QApplication.instance() or QApplication([])
+    window = FileConverter()
+    window.set_source_file(source_png)
+    worker_start_folder = folder / f"worker-start-{uuid.uuid4().hex}"
+    window.output_folder = worker_start_folder
+    worker_globals = window.start_conversion.__globals__
+    original_qthread = worker_globals["QThread"]
+    original_conversion_worker = worker_globals["ConversionWorker"]
+    cancellation_snapshots = []
+
+    class CancellationProbeWorker(original_conversion_worker):
+        def cancel(self):
+            super().cancel()
+            cancellation_snapshots.append(self.cancel_event.is_set())
+
+    class FailingStartThread(original_qthread):
+        def start(self, *args, **kwargs):
+            del args, kwargs
+            raise RuntimeError("mocked worker start failure")
+
+    worker_globals["ConversionWorker"] = CancellationProbeWorker
+    worker_globals["QThread"] = FailingStartThread
+    try:
+        window.start_conversion()
+    finally:
+        worker_globals["QThread"] = original_qthread
+        worker_globals["ConversionWorker"] = original_conversion_worker
+    if (
+        window.running
+        or window.worker is not None
+        or window.worker_thread is not None
+        or window.output_file is not None
+        or window.convert_button.text() != "Convert"
+        or not window.convert_button.isEnabled()
+        or not window.file_browse_button.isEnabled()
+        or not window.output_browse_button.isEnabled()
+        or window.progress_bar.value() != 0
+        or window.status_label.text() != "Conversion could not start"
+        or "No output was changed" not in window.log_box.toPlainText()
+        or cancellation_snapshots != [True]
+    ):
+        raise RuntimeError("A QThread.start failure wedged the conversion UI.")
+
+    partial_start_seen = threading.Event()
+    partial_start_release = threading.Event()
+
+    class BlockingStartProbeWorker(original_conversion_worker):
+        @Slot()
+        def run(self):
+            partial_start_seen.set()
+            partial_start_release.wait(5)
+            self.finished.emit("cancelled", "Conversion cancelled.")
+
+    class PartiallyFailingStartThread(original_qthread):
+        def run(self):
+            partial_start_seen.set()
+            partial_start_release.wait(5)
+
+        def start(self, *args, **kwargs):
+            super().start(*args, **kwargs)
+            if not partial_start_seen.wait(2):
+                raise RuntimeError("mocked worker did not launch")
+            raise RuntimeError("mocked partial worker start failure")
+
+    active_partial_thread = None
+    worker_globals["ConversionWorker"] = BlockingStartProbeWorker
+    worker_globals["QThread"] = PartiallyFailingStartThread
+    try:
+        window.start_conversion()
+        active_partial_thread = window.worker_thread
+        partial_state = (
+            window.running,
+            window.worker is not None,
+            active_partial_thread is not None,
+            window.convert_button.text(),
+            window.convert_button.isEnabled(),
+            window.status_label.text(),
+        )
+        if partial_state != (
+            True,
+            True,
+            True,
+            "Stopping...",
+            False,
+            "Stopping after start failure",
+        ):
+            raise RuntimeError(
+                f"A partially started conversion worker was deleted unsafely: {partial_state!r}"
+            )
+    finally:
+        worker_globals["QThread"] = original_qthread
+        worker_globals["ConversionWorker"] = original_conversion_worker
+        partial_start_release.set()
+        if active_partial_thread is not None:
+            active_partial_thread.quit()
+            active_partial_thread.wait(3000)
+        application.processEvents()
+    if (
+        window.running
+        or window.worker is not None
+        or window.worker_thread is not None
+        or window.convert_button.text() != "Convert"
+        or not window.convert_button.isEnabled()
+    ):
+        raise RuntimeError("A partially started conversion worker did not clean up safely.")
+    window.close()
+    application.processEvents()
 
     (folder / "self-test-passed.txt").write_text(
         "File Converter self-test passed.\n",
@@ -3060,7 +3229,47 @@ class FileConverter(QMainWindow):
         self.status_label.setText("Converting...")
         self.progress_bar.setRange(0, 0)
         self.set_controls_enabled(False)
-        self.worker_thread.start()
+        try:
+            self.worker_thread.start()
+        except Exception:
+            failed_worker = self.worker
+            failed_thread = self.worker_thread
+            if failed_worker is not None:
+                failed_worker.cancel()
+            thread_stopped = True
+            if failed_thread is not None:
+                failed_thread.requestInterruption()
+                failed_thread.quit()
+                thread_stopped = failed_thread.wait(1000)
+            self.output_file = None
+            self.open_folder_button.setEnabled(False)
+            if not thread_stopped:
+                self.convert_button.setText("Stopping...")
+                self.convert_button.setEnabled(False)
+                self.status_label.setText("Stopping after start failure")
+                self.append_log(
+                    "The conversion worker reported a start failure after launching. "
+                    "Waiting for it to stop safely."
+                )
+                return
+            self.worker = None
+            self.worker_thread = None
+            self.running = False
+            for qt_object in (failed_worker, failed_thread):
+                if qt_object is not None:
+                    try:
+                        delete_qt_object(qt_object)
+                    except RuntimeError:
+                        pass
+            self.convert_button.setText("Convert")
+            self.convert_button.setEnabled(True)
+            self.set_controls_enabled(True)
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
+            self.status_label.setText("Conversion could not start")
+            self.append_log(
+                "The conversion worker could not start. No output was changed."
+            )
 
     def set_controls_enabled(self, enabled: bool):
         self.file_browse_button.setEnabled(enabled)
