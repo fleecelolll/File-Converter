@@ -4,52 +4,56 @@
 
 A little tool I made with AI to quickly convert common image, audio, video, archive, and script files locally on 64-bit Windows.
 
-</div>
+<img src="File%20Converter.png" alt="File Converter app window" width="760">
 
-<p align="center">
-  <img src="File Converter.png" alt="file converter" width="673">
-</p>
+</div>
 
 ## features
 
-- convert common image, audio, video, archive, and script formats
-- preserve image animation when the output format supports it
-- copy compatible media streams without re-encoding or quality loss
-- extract audio from video files
-- convert existing archives or create new archives from files and folders
-- swap BAT/CMD and PY/PYW extensions without changing file contents
-- choose the output folder
-- follow progress in the built-in log
-- process every file locally without uploads or telemetry
+- Convert common image, audio, video, archive, and script formats
+- Preserve image animation when the output format supports it
+- Copy compatible media streams without re-encoding
+- Extract audio from video files
+- Convert archives or create new archives from files and folders
+- Swap BAT/CMD and PY/PYW extensions without changing file contents
+- Choose the output folder and follow progress in the built-in log
+- Process every file locally without uploads or telemetry
 
-Supported images include PNG, JPG, WEBP, BMP, ICO, GIF, TIFF, TGA, AVIF, HEIC, and HEIF. Audio and video conversion uses FFmpeg. Archives support ZIP, 7Z, TAR, TAR.GZ, TGZ, and GZ.
+## requirements
+
+- 64-bit x64 Windows
+- An internet connection during first setup
+- Enough free space for private Python, packages, and FFmpeg
+- No internet connection while using the installed app
 
 ## installation
 
-1. Download and extract the release ZIP.
-2. Double-click `Installer.bat`.
-3. Let every setup check pass.
-4. Double-click the `File Converter` shortcut created in the folder.
+1. Download the latest release ZIP.
+2. Extract the complete folder.
+3. Double-click `Installer.bat`.
+4. Press **Y** once to approve setup.
+5. Leave the setup window open until every check passes.
+6. Double-click the `File Converter` shortcut created in the folder.
 
-The setup keeps the private Python runtime, verified FFmpeg tools, and Python packages inside the extracted folder. The app shortcut uses that private runtime directly, so it does not depend on Microsoft Store or system Python. Setup does not need administrator access, change PATH, or install global packages. It also installs one small shared launcher in `%LOCALAPPDATA%\Fleece Tools\Python Launcher` and sets `.pyw` files to open with it for your Windows account. The launcher prefers the selected tool's sibling `.runtime\python\pythonw.exe` and keeps a legacy `.venv\Scripts\pythonw.exe` fallback for older Fleece Tool releases; it never uses another tool's Python. You can copy the shortcut to your Desktop or pin it to the taskbar.
+Keep the full extracted folder path at 72 characters or fewer so Windows can install the private packages reliably.
 
-Before the first Fleece Tools association change, setup exports any existing per-user `.pyw` settings to that shared folder. If the previous setting cannot be backed up safely, setup stops without overwriting it. A later non-Fleece choice is also left alone.
+Setup keeps the private Python runtime and all app-specific components inside the extracted folder. It does not require administrator access, change PATH, or install global Python packages. The shortcut starts the app with that private runtime, so Microsoft Store or system Python is not required.
 
-Setup installs or repairs official 64-bit Python 3.14.7 privately in `.runtime\python`; it does not use or modify a Microsoft Store or system Python installation. Python, pip, PySide6, Pillow, pillow-heif, py7zr, FFmpeg, and FFprobe are pinned and validated. Downloaded runtime archives are checked against pinned SHA-256 checksums.
+Setup pins and verifies official Python 3.14.7, pip, PySide6-Essentials, Pillow, pillow-heif, py7zr, FFmpeg, and FFprobe. Downloaded runtime archives are checked against pinned SHA-256 hashes before use.
 
-Run `Installer.bat` again whenever you want to repair or update the private components. Run it again after moving the extracted folder so the shortcut is recreated for the folder's new location. Always open the `File Converter` shortcut, not `File Converter.pyw`.
+Setup also installs one small shared per-user launcher in `%LOCALAPPDATA%\Fleece Tools\Python Launcher` and safely associates `.pyw` files with it for the current Windows account. It backs up an existing per-user association before the first change and never borrows another tool's Python runtime.
+
+Run `Installer.bat` again to repair the private components or after moving the complete folder. Setup preserves your files and recreates the shortcut for the folder's current location.
 
 ## usage
 
-1. choose a category
-2. choose a file or drag it into the app
-3. select the output format
-4. choose the output folder
-5. click **Convert**
+1. Choose a category.
+2. Choose a file or drag it into the app.
+3. Select the output format.
+4. Choose the output folder.
+5. Click **Convert**.
 
-In the Archives category, Browse lets you choose multiple files or one folder. Drag and drop can combine files and folders in one archive. Selecting one existing archive converts it to another archive format.
-
-Animation preservation and compatible media stream copying happen automatically. If direct media copying is not compatible with the selected format, FFmpeg performs a normal conversion instead. The original input is never overwritten.
+The original input is never overwritten. Animation is preserved when the output supports it, and compatible media streams are copied without re-encoding when possible.
 
 ## built with
 
@@ -62,18 +66,26 @@ Animation preservation and compatible media stream copying happen automatically.
 
 ## privacy and removal
 
-The app has no telemetry, analytics, accounts, or usage tracking. Files are processed locally and are never uploaded. The app makes no runtime network requests.
+The app has no telemetry, analytics, advertisements, accounts, uploads, or runtime network requests. Files are processed locally. Setup logs can contain local folder paths, so review them before sharing.
 
 To remove only File Converter, close it and delete the extracted folder. The app does not install a background service, add itself to startup, or create an uninstaller entry.
 
-The shared `.pyw` launcher is used by every installed Fleece Tool, so removing one tool does not remove it. To restore the `.pyw` settings that existed before Fleece Tools first configured them, run `%LOCALAPPDATA%\Fleece Tools\Python Launcher\Restore pyw association.cmd`. The restore helper refuses to overwrite a newer non-Fleece choice. After restoring, and after removing every Fleece Tool that uses it, you can delete the shared `Python Launcher` folder. The registry backup files can contain local application names and paths, so review them before sharing.
+The shared `.pyw` launcher can be used by every installed Fleece Tool, so removing one tool does not remove it. To restore the association that existed before Fleece Tools first configured it, run `%LOCALAPPDATA%\Fleece Tools\Python Launcher\Restore pyw association.cmd` after closing every Fleece Tool.
+
+## troubleshooting
+
+If setup stops, review `setup.log`, correct the listed problem, and run `Installer.bat` again. Setup reports success only after its dependencies, offline self-tests, and shortcut all pass.
+
+If the `File Converter` shortcut does not open, run `Installer.bat` again and keep the complete extracted folder together. Setup recreates and validates the shortcut for the folder's current location.
+
+BAT/CMD and PY/PYW conversions only change the extension. They do not translate or rewrite script contents.
 
 ## source use
 
-The source is public for transparency and security review. Copyright 2026 Fleece. All rights reserved. No license is granted to use, modify, redistribute, sell, or publish derivative versions beyond the limited rights provided by the hosting platform.
+The source is public for transparency and security review. Copyright 2026 Fleece. All rights reserved. No permission is granted to use, copy, modify, redistribute, sell, or publish derivative versions. See [LICENSE](LICENSE).
 
 ## note
 
 This project was made with AI.
 
-BAT/CMD and PY/PYW swaps only change the extension. They do not translate the script or change its contents.
+Keep a backup of important files and verify converted output before deleting an original.

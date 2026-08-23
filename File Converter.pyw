@@ -32,7 +32,7 @@ EMBEDDED_PY = RUNTIME_DIR / "python" / "python.exe"
 EMBEDDED_PYW = RUNTIME_DIR / "python" / "pythonw.exe"
 SETUP_LOCK_DIR = RUNTIME_DIR / "setup.lock"
 APP_TITLE = "File Converter"
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 APP_MUTEX_NAMES = (
     r"Global\FleeceFileConverterApp",
     r"Local\FleeceFileConverterApp",
@@ -65,16 +65,17 @@ def bootstrap_local_python():
         if not local_python.is_file() or not local_pythonw.is_file():
             continue
         try:
-            validation = subprocess.run(
-                [str(local_python), "-I", "-c", "pass"],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=8,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            if validation.returncode != 0:
-                continue
+            if current not in valid_executables:
+                validation = subprocess.run(
+                    [str(local_python), "-I", "-c", "pass"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=60,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                if validation.returncode != 0:
+                    continue
             subprocess.Popen(
                 [
                     str(local_pythonw),
@@ -1635,7 +1636,7 @@ def convert_file(
 
 
 def run_self_test(folder: Path) -> int:
-    assert APP_VERSION == "1.0.4"
+    assert APP_VERSION == "1.0.5"
     folder.mkdir(parents=True, exist_ok=True)
 
     if NATIVE_KERNEL32 is not None:
