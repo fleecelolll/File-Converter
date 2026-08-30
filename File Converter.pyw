@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import atexit
 import ctypes
 import gzip
@@ -13,10 +15,12 @@ import sys
 import tarfile
 import tempfile
 import threading
+import traceback
 import uuid
 import warnings
 import wave
 import zipfile
+from datetime import datetime
 from pathlib import Path
 from pathlib import PurePosixPath
 from ctypes import wintypes
@@ -31,8 +35,9 @@ VENV_PYW = VENV_ROOT / "Scripts" / "pythonw.exe"
 EMBEDDED_PY = RUNTIME_DIR / "python" / "python.exe"
 EMBEDDED_PYW = RUNTIME_DIR / "python" / "pythonw.exe"
 SETUP_LOCK_DIR = RUNTIME_DIR / "setup.lock"
+ERROR_LOG_PATH = RUNTIME_DIR / "error.log"
 APP_TITLE = "File Converter"
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 APP_MUTEX_NAMES = (
     r"Global\FleeceFileConverterApp",
     r"Local\FleeceFileConverterApp",
@@ -102,9 +107,6 @@ if __name__ == "__main__":
 
 
 try:
-    import py7zr
-    from PIL import Image, ImageOps, UnidentifiedImageError, features
-    from pillow_heif import register_heif_opener
     from PySide6.QtCore import (
         QEasingCurve,
         QEvent,
@@ -123,6 +125,7 @@ try:
         QDesktopServices,
         QDragEnterEvent,
         QDropEvent,
+        QKeyEvent,
         QMouseEvent,
         QPainter,
         QPen,
@@ -154,7 +157,67 @@ except Exception:
     raise
 
 
-register_heif_opener(thumbnails=False)
+py7zr = None
+Image = None
+ImageOps = None
+UnidentifiedImageError = None
+features = None
+_IMAGE_BACKEND_LOCK = threading.Lock()
+_ARCHIVE_BACKEND_LOCK = threading.Lock()
+
+
+def load_image_backend():
+    """Load image codecs on first image work instead of delaying every startup."""
+    global Image, ImageOps, UnidentifiedImageError, features
+    if Image is not None:
+        return
+    with _IMAGE_BACKEND_LOCK:
+        if Image is not None:
+            return
+        try:
+            from PIL import Image as pillow_image
+            from PIL import ImageOps as pillow_image_ops
+            from PIL import UnidentifiedImageError as unidentified_image_error
+            from PIL import features as pillow_features
+            from pillow_heif import register_heif_opener
+
+            register_heif_opener(thumbnails=False)
+        except Exception as error:
+            raise RuntimeError(
+                "Image support is incomplete. Run Installer.bat again to repair it."
+            ) from error
+        Image = pillow_image
+        ImageOps = pillow_image_ops
+        UnidentifiedImageError = unidentified_image_error
+        features = pillow_features
+
+
+def load_archive_backend():
+    """Load the optional 7Z backend only when archive work needs it."""
+    global py7zr
+    if py7zr is not None:
+        return
+    with _ARCHIVE_BACKEND_LOCK:
+        if py7zr is not None:
+            return
+        try:
+            import py7zr as seven_zip_backend
+        except Exception as error:
+            raise RuntimeError(
+                "7Z support is incomplete. Run Installer.bat again to repair it."
+            ) from error
+        py7zr = seven_zip_backend
+
+
+def screen_aware_window_dimensions(width: int, height: int):
+    usable_width = max(1, int(width) - 32)
+    usable_height = max(1, int(height) - 32)
+    return (
+        min(660, usable_width),
+        min(570, usable_height),
+        min(620, usable_width),
+        min(530, usable_height),
+    )
 
 
 if os.name == "nt":
@@ -211,6 +274,54 @@ def acquire_app_mutex():
             continue
         return False
     return False
+
+
+def exception_report(error_type, error, trace) -> str:
+    timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    return (
+        f"{APP_TITLE} {APP_VERSION}\n"
+        f"Time: {timestamp}\n\n"
+        + "".join(traceback.format_exception(error_type, error, trace))
+    )
+
+
+def write_exception_log(error_type, error, trace, path: Path = ERROR_LOG_PATH):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            exception_report(error_type, error, trace),
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def handle_unhandled_exception(error_type, error, trace):
+    try:
+        write_exception_log(error_type, error, trace)
+    except Exception:
+        pass
+    show_native_setup_error(
+        "The app stopped because of an unexpected error.\n\n"
+        "Details were saved to .runtime\\error.log. If the issue continues, "
+        "run Installer.bat to repair the setup."
+    )
+    application = QApplication.instance()
+    if application is not None:
+        application.quit()
+
+
+def handle_unhandled_thread_exception(arguments):
+    handle_unhandled_exception(
+        arguments.exc_type,
+        arguments.exc_value,
+        arguments.exc_traceback,
+    )
 
 
 IMAGE_EXTENSIONS = {
@@ -389,6 +500,23 @@ def check_cancel(cancel_event: Optional[threading.Event]):
         raise ConversionCancelled("Conversion cancelled.")
 
 
+def terminate_subprocess_safely(process, timeout: float = 5.0):
+    """Best-effort cleanup that never replaces the conversion's real outcome."""
+    try:
+        running = process.poll() is None
+    except Exception:
+        running = True
+    if running:
+        try:
+            process.kill()
+        except Exception:
+            pass
+    try:
+        process.wait(timeout=timeout)
+    except Exception:
+        pass
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -457,6 +585,7 @@ def validate_image_output(
     expected_format: str,
     expected_frames: int = 1,
 ):
+    load_image_backend()
     if not path.is_file() or path.stat().st_size == 0:
         raise RuntimeError("The converted image was not created.")
     with warnings.catch_warnings():
@@ -482,6 +611,7 @@ def convert_image(
     target_label: str,
     cancel_event: Optional[threading.Event] = None,
 ) -> str:
+    load_image_backend()
     if target_label not in IMAGE_FORMATS:
         raise ValueError("Choose a valid image format.")
     if source.stat().st_size > MAX_IMAGE_BYTES:
@@ -505,14 +635,19 @@ def convert_image(
                     raise ValueError(
                         f"The image contains more than {MAX_IMAGE_FRAMES} frames."
                     )
-                if opened.width * opened.height * frames_to_read > MAX_IMAGE_TOTAL_PIXELS:
-                    raise ValueError("The image animation is too large to process safely.")
                 loop = int(opened.info.get("loop", 0) or 0)
                 frames = []
                 durations = []
+                total_pixels = 0
                 for frame_index in range(frames_to_read):
                     check_cancel(cancel_event)
                     opened.seek(frame_index)
+                    frame_pixels = opened.width * opened.height
+                    if frame_pixels < 1:
+                        raise ValueError("The image contains a frame with an invalid size.")
+                    total_pixels += frame_pixels
+                    if total_pixels > MAX_IMAGE_TOTAL_PIXELS:
+                        raise ValueError("The image animation is too large to process safely.")
                     opened.load()
                     frames.append(ImageOps.exif_transpose(opened).copy())
                     duration = opened.info.get("duration", 100)
@@ -1093,10 +1228,12 @@ def convert_media(
         return f"Created {output.name} with FFmpeg re-encoding."
     finally:
         if process_controller is not None:
-            process_controller.clear_process(process)
-        if process is not None and process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
+            try:
+                process_controller.clear_process(process)
+            except Exception:
+                pass
+        if process is not None:
+            terminate_subprocess_safely(process)
         try:
             temporary.unlink(missing_ok=True)
         except OSError:
@@ -1248,6 +1385,7 @@ def extract_archive(
                 with source_stream, target.open("xb") as output_stream:
                     copy_limited(source_stream, output_stream, running_total, cancel_event)
     elif source_extension == ".7z":
+        load_archive_backend()
         with py7zr.SevenZipFile(
             source,
             "r",
@@ -1344,6 +1482,7 @@ def write_archive(
                             cancel_event,
                         )
     elif target_extension == ".7z":
+        load_archive_backend()
         with py7zr.SevenZipFile(output, "w") as archive:
             for child in children:
                 check_cancel(cancel_event)
@@ -1532,6 +1671,7 @@ def validate_archive_output(path: Path):
             if not archive.infolist() or archive.testzip() is not None:
                 raise RuntimeError("The ZIP archive verification failed.")
     elif extension == ".7z":
+        load_archive_backend()
         with py7zr.SevenZipFile(path, "r") as archive:
             if not archive.list() or archive.test() is False:
                 raise RuntimeError("The 7Z archive verification failed.")
@@ -1571,10 +1711,15 @@ def convert_archive(
                     extracted,
                     cancel_event,
                 )
-            except py7zr.exceptions.PasswordRequired as error:
-                raise ValueError(
-                    "Password-protected 7Z files are not supported."
-                ) from error
+            except Exception as error:
+                if py7zr is not None and isinstance(
+                    error,
+                    py7zr.exceptions.PasswordRequired,
+                ):
+                    raise ValueError(
+                        "Password-protected 7Z files are not supported."
+                    ) from error
+                raise
             if progress_callback is not None:
                 progress_callback(45)
             write_archive(extracted, temporary, target_label, cancel_event)
@@ -1636,8 +1781,47 @@ def convert_file(
 
 
 def run_self_test(folder: Path) -> int:
-    assert APP_VERSION == "1.0.5"
+    assert APP_VERSION == "1.0.6"
     folder.mkdir(parents=True, exist_ok=True)
+    if Image is not None or py7zr is not None:
+        raise RuntimeError("Conversion backends were loaded before first use.")
+    load_image_backend()
+    if Image is None or ImageOps is None or features is None:
+        raise RuntimeError("The image backend did not finish loading.")
+    if screen_aware_window_dimensions(400, 300) != (368, 268, 368, 268):
+        raise RuntimeError("Small-screen window sizing is not bounded correctly.")
+
+    try:
+        raise RuntimeError("self-test exception detail")
+    except RuntimeError:
+        error_type, error, trace = sys.exc_info()
+    exception_log = folder / "unhandled-error.log"
+    write_exception_log(error_type, error, trace, exception_log)
+    exception_text = exception_log.read_text(encoding="utf-8")
+    if (
+        f"{APP_TITLE} {APP_VERSION}" not in exception_text
+        or "RuntimeError: self-test exception detail" not in exception_text
+    ):
+        raise RuntimeError("Unhandled exception logging lost important details.")
+
+    cleanup_calls = []
+
+    class BrokenCleanupProcess:
+        def poll(self):
+            cleanup_calls.append("poll")
+            raise OSError("mocked poll failure")
+
+        def kill(self):
+            cleanup_calls.append("kill")
+            raise OSError("mocked kill failure")
+
+        def wait(self, timeout):
+            cleanup_calls.append(("wait", timeout))
+            raise subprocess.TimeoutExpired("mocked", timeout)
+
+    terminate_subprocess_safely(BrokenCleanupProcess(), timeout=0.01)
+    if cleanup_calls != ["poll", "kill", ("wait", 0.01)]:
+        raise RuntimeError("FFmpeg cleanup did not remain best-effort after failures.")
 
     if NATIVE_KERNEL32 is not None:
         test_mutex_name = f"Local\\FleeceFileConverterSelfTest-{uuid.uuid4().hex}"
@@ -1720,6 +1904,32 @@ def run_self_test(folder: Path) -> int:
     )
     if "first of 2 frames" not in static_message:
         raise RuntimeError("The static image frame notice test failed.")
+
+    varying_tiff = folder / "varying-frame-sizes.tiff"
+    small_frame = Image.new("RGB", (10, 10), (1, 2, 3))
+    large_frame = Image.new("RGB", (40, 30), (4, 5, 6))
+    small_frame.save(
+        varying_tiff,
+        format="TIFF",
+        save_all=True,
+        append_images=[large_frame],
+    )
+    original_pixel_limit = globals()["MAX_IMAGE_TOTAL_PIXELS"]
+    globals()["MAX_IMAGE_TOTAL_PIXELS"] = 1_000
+    try:
+        try:
+            convert_file(
+                varying_tiff,
+                folder / "varying-frame-sizes.png",
+                "PNG image (.png)",
+            )
+        except ValueError as error:
+            if "too large" not in str(error):
+                raise RuntimeError("Variable frame sizes gave an unclear error.") from error
+        else:
+            raise RuntimeError("Later oversized image frames bypassed the pixel limit.")
+    finally:
+        globals()["MAX_IMAGE_TOTAL_PIXELS"] = original_pixel_limit
 
     source_wav = folder / "audio.wav"
     sample_rate = 16000
@@ -1832,6 +2042,11 @@ def run_self_test(folder: Path) -> int:
     source_archive = folder / "archive.zip"
     with zipfile.ZipFile(source_archive, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("folder/data.txt", b"file-converter-archive-ok")
+    non_7z_output = folder / "archive-without-7z.tar"
+    convert_file(source_archive, non_7z_output, "TAR archive (.tar)")
+    validate_archive_output(non_7z_output)
+    if py7zr is not None:
+        raise RuntimeError("Non-7Z archive work loaded the 7Z backend.")
     archive_outputs = {}
     for label, extension in ARCHIVE_FORMATS.items():
         if label == "ZIP archive (.zip)":
@@ -1840,6 +2055,8 @@ def run_self_test(folder: Path) -> int:
         convert_file(source_archive, output, label)
         validate_archive_output(output)
         archive_outputs[label] = output
+    if py7zr is None:
+        raise RuntimeError("7Z work did not load the 7Z backend.")
     for source in archive_outputs.values():
         source_name = extension_for_path(source).replace(".", "-").strip("-")
         output = folder / f"archive-round-{source_name}.zip"
@@ -2006,6 +2223,49 @@ def run_self_test(folder: Path) -> int:
 
     application = QApplication.instance() or QApplication([])
     window = FileConverter()
+    window.show()
+    application.processEvents()
+    screen = application.primaryScreen()
+    if screen is not None:
+        available = screen.availableGeometry()
+        if (
+            window.minimumWidth() > max(1, available.width() - 32)
+            or window.minimumHeight() > max(1, available.height() - 32)
+        ):
+            raise RuntimeError("The app minimum size exceeds the available screen.")
+        window.move(available.right() - 8, available.top())
+        application.processEvents()
+        window.category_dropdown.show_popup()
+        popup_geometry = window.category_dropdown.popup.geometry()
+        if (
+            popup_geometry.left() < available.left()
+            or popup_geometry.right() > available.right()
+            or popup_geometry.top() < available.top()
+            or popup_geometry.bottom() > available.bottom()
+        ):
+            raise RuntimeError("A dropdown popup escaped the available screen.")
+
+        escape_event = QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier)
+        if not window.category_dropdown.eventFilter(application, escape_event):
+            raise RuntimeError("Escape did not dismiss an open dropdown.")
+        if not window.category_dropdown._closing:
+            raise RuntimeError("Escape did not start dropdown dismissal.")
+        window.category_dropdown._stop_popup_animation()
+        window.category_dropdown.popup.hide()
+        window.category_dropdown._closing = False
+
+        window.category_dropdown.popup.show()
+        application.installEventFilter(window.category_dropdown)
+        window.category_dropdown.eventFilter(
+            application,
+            QEvent(QEvent.ApplicationDeactivate),
+        )
+        if not window.category_dropdown._closing:
+            raise RuntimeError("Application deactivation did not dismiss a dropdown.")
+        window.category_dropdown._stop_popup_animation()
+        window.category_dropdown.popup.hide()
+        window.category_dropdown._closing = False
+        application.removeEventFilter(window.category_dropdown)
     window.set_source_file(source_png)
     worker_start_folder = folder / f"worker-start-{uuid.uuid4().hex}"
     window.output_folder = worker_start_folder
@@ -2306,16 +2566,25 @@ class AnimatedDropdown(QWidget):
         popup_width = self.width()
         button_top_left = self.mapToGlobal(QPoint(0, 0))
         below_y = button_top_left.y() + self.height() + 4
-        screen = QApplication.screenAt(button_top_left)
+        screen = QApplication.screenAt(button_top_left) or QApplication.primaryScreen()
         available = screen.availableGeometry() if screen else QRect()
 
-        if available and below_y + popup_height > available.bottom():
+        if available:
+            popup_width = min(popup_width, available.width())
+            popup_height = min(popup_height, available.height())
+        if available and below_y + popup_height - 1 > available.bottom():
             final_y = button_top_left.y() - popup_height - 4
         else:
             final_y = below_y
+        final_x = button_top_left.x()
+        if available:
+            final_x = min(final_x, available.right() - popup_width + 1)
+            final_x = max(available.left(), final_x)
+            final_y = min(final_y, available.bottom() - popup_height + 1)
+            final_y = max(available.top(), final_y)
 
         end_rect = QRect(
-            button_top_left.x(),
+            final_x,
             final_y,
             popup_width,
             popup_height,
@@ -2395,6 +2664,18 @@ class AnimatedDropdown(QWidget):
                 and not button_rect.contains(global_position)
             ):
                 self.hide_popup()
+        elif self.popup.isVisible() and event.type() in {
+            QEvent.ApplicationDeactivate,
+            QEvent.WindowDeactivate,
+        }:
+            self.hide_popup()
+        elif (
+            self.popup.isVisible()
+            and event.type() == QEvent.KeyPress
+            and event.key() == Qt.Key_Escape
+        ):
+            self.hide_popup()
+            return True
         return super().eventFilter(watched, event)
 
 
@@ -2477,8 +2758,15 @@ class FileConverter(QMainWindow):
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAcceptDrops(True)
-        self.resize(660, 570)
-        self.setMinimumSize(620, 530)
+        screen = QApplication.primaryScreen()
+        available = (
+            screen.availableGeometry() if screen is not None else QRect(0, 0, 660, 570)
+        )
+        width, height, minimum_width, minimum_height = screen_aware_window_dimensions(
+            available.width(), available.height()
+        )
+        self.resize(width, height)
+        self.setMinimumSize(minimum_width, minimum_height)
 
         self.source_file: Optional[Path] = None
         self.archive_sources = []
@@ -3419,6 +3707,8 @@ if __name__ == "__main__":
         )
         raise SystemExit(1)
 
+    sys.excepthook = handle_unhandled_exception
+    threading.excepthook = handle_unhandled_thread_exception
     app = QApplication(sys.argv)
     app.setApplicationName(APP_TITLE)
     app.setApplicationVersion(APP_VERSION)
