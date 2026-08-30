@@ -53,6 +53,9 @@ jobs:
               throw "The unsupported-platform check changed local setup state: $path"
             }
           }
+          # GitHub's PowerShell wrapper propagates the last native exit code.
+          # The installer exit code above is expected and has now been verified.
+          $global:LASTEXITCODE = 0
 
       - name: Verify the shared launcher without changing associations
         if: matrix.runner != 'windows-11-arm'
