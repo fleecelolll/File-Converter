@@ -33,15 +33,39 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7
 
+      - name: Verify safe ARM64 unsupported-platform handling
+        if: matrix.runner == 'windows-11-arm'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $output = & "$env:SystemRoot\System32\cmd.exe" /d /s /c 'call "Installer.bat" --yes --no-pause --skip-association' 2>&1
+          $exitCode = $LASTEXITCODE
+          $output | Write-Host
+          $text = $output -join "`n"
+          if ($exitCode -ne 1) {
+            throw "The x64-only installer returned unexpected exit code $exitCode on ARM64."
+          }
+          if ($text -notmatch 'This installer currently supports x64 Windows only\.') {
+            throw 'The ARM64 rejection did not report the exact supported-platform boundary.'
+          }
+          foreach ($path in @('.runtime', 'File Converter.lnk', 'setup.log')) {
+            if (Test-Path -LiteralPath $path) {
+              throw "The unsupported-platform check changed local setup state: $path"
+            }
+          }
+
       - name: Verify the shared launcher without changing associations
+        if: matrix.runner != 'windows-11-arm'
         shell: cmd
         run: Installer.bat --test-association
 
       - name: Perform a clean private setup and app self-test
+        if: matrix.runner != 'windows-11-arm'
         shell: cmd
         run: Installer.bat --yes --no-pause --skip-association
 
       - name: Verify the repair path against the installed runtime
+        if: matrix.runner != 'windows-11-arm'
         shell: cmd
         run: Installer.bat --yes --no-pause --skip-association
 
