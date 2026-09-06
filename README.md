@@ -39,7 +39,7 @@ Keep the full extracted folder path at 72 characters or fewer so Windows can ins
 
 Setup keeps the private Python runtime, dependencies, settings, and every app component inside the extracted folder. It does not require administrator access, change PATH, or install global Python packages. The generated folder-local shortcut starts the app directly with that private runtime, so Microsoft Store or system Python is not required.
 
-Setup pins and verifies official Python 3.14.7, pip, PySide6-Essentials, Pillow, pillow-heif, py7zr, FFmpeg, and FFprobe. Downloaded runtime archives are checked against pinned SHA-256 hashes before use.
+Setup pins and verifies official Python 3.14.7, pip, the complete private PySide6-Essentials, Pillow, pillow-heif, and py7zr dependency set, FFmpeg, and FFprobe. Downloaded runtime archives are checked against pinned SHA-256 hashes before use.
 
 Run `Installer.bat` again to repair the private components or after moving the complete folder. Setup preserves your files and recreates the shortcut for the folder's current location.
 
@@ -64,7 +64,7 @@ The original input is never overwritten. Animation is preserved when the output 
 
 ## privacy and removal
 
-The app has no telemetry, analytics, advertisements, accounts, uploads, or runtime network requests. Files are processed locally. Setup logs can contain local folder paths, so review them before sharing.
+The app has no telemetry, analytics, advertisements, accounts, uploads, or runtime network requests. Files are processed locally. Temporary archive staging stays in `.runtime\work` inside the extracted folder and is removed after each job; a later startup safely retries cleanup after an interrupted job. Setup logs can contain local folder paths, so review them before sharing.
 
 To remove File Converter, close it and delete the extracted folder. This removes its folder-local shortcut, private runtime, dependencies, settings, and app files. The app does not install a background service, add itself to startup, or create an uninstaller entry.
 

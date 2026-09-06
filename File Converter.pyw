@@ -13,13 +13,13 @@ import struct
 import subprocess
 import sys
 import tarfile
-import tempfile
 import threading
 import traceback
 import uuid
 import warnings
 import wave
 import zipfile
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -33,6 +33,8 @@ EMBEDDED_PY = RUNTIME_DIR / "python" / "python.exe"
 EMBEDDED_PYW = RUNTIME_DIR / "python" / "pythonw.exe"
 SETUP_LOCK_DIR = RUNTIME_DIR / "setup.lock"
 ERROR_LOG_PATH = RUNTIME_DIR / "error.log"
+ARCHIVE_WORK_ROOT = RUNTIME_DIR / "work"
+ARCHIVE_WORK_PREFIX = "archive-"
 APP_TITLE = "File Converter"
 APP_VERSION = "1.0.10"
 APP_MUTEX_NAMES = (
@@ -42,6 +44,21 @@ APP_MUTEX_NAMES = (
 APP_MUTEX_HANDLE = None
 ERROR_ACCESS_DENIED = 5
 ERROR_ALREADY_EXISTS = 183
+EXPECTED_PRIVATE_PACKAGES = {
+    "brotli": "1.2.0",
+    "inflate64": "1.0.4",
+    "multivolumefile": "0.2.3",
+    "pillow": "12.3.0",
+    "pillow-heif": "1.7.0",
+    "psutil": "7.2.2",
+    "py7zr": "1.1.3",
+    "pybcj": "1.0.8",
+    "pycryptodomex": "3.23.0",
+    "pyppmd": "1.3.1",
+    "pyside6-essentials": "6.11.2",
+    "shiboken6": "6.11.2",
+    "texttable": "1.7.0",
+}
 
 
 def show_native_setup_error(message: str):
@@ -513,6 +530,30 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def canonical_package_name(name: str) -> str:
+    normalized = name.strip().lower().replace("_", "-").replace(".", "-")
+    while "--" in normalized:
+        normalized = normalized.replace("--", "-")
+    return normalized
+
+
+def verify_private_package_manifest() -> dict[str, str]:
+    from importlib.metadata import distributions
+
+    installed_entries = []
+    for distribution in distributions():
+        name = distribution.metadata.get("Name")
+        if name:
+            installed_entries.append((canonical_package_name(name), distribution.version))
+    installed = dict(installed_entries)
+    if (
+        len(installed_entries) != len(EXPECTED_PRIVATE_PACKAGES)
+        or installed != EXPECTED_PRIVATE_PACKAGES
+    ):
+        raise RuntimeError("The private Python dependency manifest is not exact.")
+    return installed
 
 
 def has_alpha(image: Image.Image) -> bool:
@@ -1513,20 +1554,148 @@ def write_archive(
         raise ValueError("Choose a valid archive format.")
 
 
+def stat_is_link_or_reparse(file_stat) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return stat.S_ISLNK(file_stat.st_mode) or bool(
+        getattr(file_stat, "st_file_attributes", 0) & reparse_flag
+    )
+
+
 def is_link_or_junction(path: Path) -> bool:
-    if path.is_symlink():
-        return True
-
-    is_junction = getattr(path, "is_junction", None)
-    if is_junction is not None:
-        return is_junction()
-
-    if os.name != "nt":
-        return False
     try:
-        return path.lstat().st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
-    except (AttributeError, OSError):
+        return stat_is_link_or_reparse(path.lstat())
+    except OSError:
         return False
+
+
+def path_exists_without_following(path: Path) -> bool:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def prepare_archive_work_root(
+    work_root: Optional[Path] = None,
+    container: Optional[Path] = None,
+) -> Path:
+    container = Path(
+        os.path.abspath(os.fspath(RUNTIME_DIR if container is None else container))
+    )
+    work_root = Path(
+        os.path.abspath(os.fspath(ARCHIVE_WORK_ROOT if work_root is None else work_root))
+    )
+    if work_root.parent != container:
+        raise RuntimeError("The private archive work folder escaped its runtime folder.")
+    if not container.is_dir() or is_link_or_junction(container):
+        raise RuntimeError("The private runtime folder is unsafe or unavailable.")
+
+    if path_exists_without_following(work_root):
+        if not work_root.is_dir() or is_link_or_junction(work_root):
+            raise RuntimeError("The private archive work folder is unsafe.")
+    else:
+        work_root.mkdir(mode=0o700)
+
+    if not work_root.is_dir() or is_link_or_junction(work_root):
+        raise RuntimeError("The private archive work folder could not be secured.")
+    if work_root.resolve(strict=True).parent != container.resolve(strict=True):
+        raise RuntimeError("The private archive work folder escaped its runtime folder.")
+    return work_root
+
+
+def is_archive_workspace_name(name: str) -> bool:
+    suffix = name[len(ARCHIVE_WORK_PREFIX) :] if name.startswith(ARCHIVE_WORK_PREFIX) else ""
+    return len(suffix) == 32 and all(character in "0123456789abcdef" for character in suffix)
+
+
+def remove_tree_without_following(path: Path):
+    try:
+        file_stat = path.lstat()
+    except FileNotFoundError:
+        return
+
+    if stat_is_link_or_reparse(file_stat):
+        if stat.S_ISDIR(file_stat.st_mode):
+            path.rmdir()
+        else:
+            path.unlink()
+        return
+    if not stat.S_ISDIR(file_stat.st_mode):
+        try:
+            path.unlink()
+        except PermissionError:
+            if is_link_or_junction(path):
+                raise
+            path.chmod(stat.S_IWRITE)
+            path.unlink()
+        return
+
+    for child in path.iterdir():
+        remove_tree_without_following(child)
+    try:
+        path.rmdir()
+    except PermissionError:
+        if is_link_or_junction(path):
+            raise
+        path.chmod(stat.S_IWRITE)
+        path.rmdir()
+
+
+def remove_archive_workspace(path: Path, work_root: Path):
+    path = Path(os.path.abspath(os.fspath(path)))
+    work_root = Path(os.path.abspath(os.fspath(work_root)))
+    if path.parent != work_root or not is_archive_workspace_name(path.name):
+        raise RuntimeError("Refusing to remove a path outside the private archive work folder.")
+    remove_tree_without_following(path)
+
+
+def cleanup_stale_archive_workspaces(
+    work_root: Optional[Path] = None,
+    container: Optional[Path] = None,
+) -> tuple[int, int]:
+    work_root = prepare_archive_work_root(work_root, container)
+    cleaned = 0
+    failed = 0
+    for child in tuple(work_root.iterdir()):
+        if not is_archive_workspace_name(child.name):
+            continue
+        try:
+            remove_archive_workspace(child, work_root)
+            cleaned += 1
+        except OSError:
+            failed += 1
+    return cleaned, failed
+
+
+@contextmanager
+def private_archive_workspace():
+    work_root = prepare_archive_work_root()
+    workspace = None
+    for _ in range(8):
+        candidate = work_root / f"{ARCHIVE_WORK_PREFIX}{uuid.uuid4().hex}"
+        try:
+            candidate.mkdir(mode=0o700)
+        except FileExistsError:
+            continue
+        workspace = candidate
+        break
+    if workspace is None:
+        raise RuntimeError("A private archive work folder could not be created.")
+    if is_link_or_junction(workspace) or workspace.resolve(strict=True).parent != work_root.resolve(strict=True):
+        try:
+            remove_archive_workspace(workspace, work_root)
+        except OSError:
+            pass
+        raise RuntimeError("The private archive work folder is unsafe.")
+
+    try:
+        yield workspace
+    finally:
+        try:
+            remove_archive_workspace(workspace, work_root)
+        except OSError:
+            pass
 
 
 def stage_archive_sources(
@@ -1625,8 +1794,8 @@ def create_archive_from_sources(
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = temporary_output_path(output)
     try:
-        with tempfile.TemporaryDirectory(prefix="file-converter-") as work:
-            staged = Path(work) / "selected"
+        with private_archive_workspace() as work:
+            staged = work / "selected"
             staged.mkdir()
             _, file_count, total = stage_archive_sources(
                 checked_sources,
@@ -1692,8 +1861,8 @@ def convert_archive(
 
     temporary = temporary_output_path(output)
     try:
-        with tempfile.TemporaryDirectory(prefix="file-converter-") as work:
-            extracted = Path(work) / "extracted"
+        with private_archive_workspace() as work:
+            extracted = work / "extracted"
             extracted.mkdir()
             try:
                 file_count, total = extract_archive(
@@ -1773,6 +1942,68 @@ def convert_file(
 def run_self_test(folder: Path) -> int:
     assert APP_VERSION == "1.0.10"
     folder.mkdir(parents=True, exist_ok=True)
+    if verify_private_package_manifest() != EXPECTED_PRIVATE_PACKAGES:
+        raise RuntimeError("The private package manifest check did not finish.")
+
+    if ARCHIVE_WORK_ROOT != RUNTIME_DIR / "work":
+        raise RuntimeError("Archive work is not contained by the private runtime.")
+    work_root = prepare_archive_work_root()
+    cleaned, failed = cleanup_stale_archive_workspaces()
+    if failed:
+        raise RuntimeError("A stale private archive workspace could not be cleaned.")
+    with private_archive_workspace() as active_workspace:
+        if active_workspace.parent != work_root or is_link_or_junction(active_workspace):
+            raise RuntimeError("An active archive workspace escaped the private runtime.")
+        active_marker = active_workspace / "active.txt"
+        active_marker.write_text("active", encoding="utf-8")
+    if path_exists_without_following(active_workspace):
+        raise RuntimeError("An active private archive workspace was not removed.")
+
+    stale_workspace = work_root / f"{ARCHIVE_WORK_PREFIX}{uuid.uuid4().hex}"
+    stale_workspace.mkdir()
+    (stale_workspace / "stale.txt").write_text("stale", encoding="utf-8")
+    cleaned, failed = cleanup_stale_archive_workspaces()
+    if cleaned != 1 or failed or path_exists_without_following(stale_workspace):
+        raise RuntimeError("Stale private archive workspace cleanup failed.")
+
+    unsafe_container = folder / f"unsafe-work-container-{uuid.uuid4().hex}"
+    unsafe_container.mkdir()
+    unsafe_work_root = unsafe_container / "work"
+    unsafe_work_root.write_text("not a directory", encoding="utf-8")
+    try:
+        prepare_archive_work_root(unsafe_work_root, unsafe_container)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("An unsafe private archive work root was accepted.")
+    finally:
+        unsafe_work_root.unlink(missing_ok=True)
+        unsafe_container.rmdir()
+
+    outside_target = folder / f"outside-work-target-{uuid.uuid4().hex}"
+    outside_target.mkdir()
+    outside_sentinel = outside_target / "keep.txt"
+    outside_sentinel.write_text("keep", encoding="utf-8")
+    linked_workspace = work_root / f"{ARCHIVE_WORK_PREFIX}{uuid.uuid4().hex}"
+    try:
+        os.symlink(outside_target, linked_workspace, target_is_directory=True)
+    except (NotImplementedError, OSError):
+        pass
+    else:
+        cleaned, failed = cleanup_stale_archive_workspaces()
+        if (
+            cleaned != 1
+            or failed
+            or path_exists_without_following(linked_workspace)
+            or not outside_sentinel.is_file()
+        ):
+            raise RuntimeError("Reparse-safe private workspace cleanup failed.")
+    finally:
+        if path_exists_without_following(linked_workspace):
+            remove_archive_workspace(linked_workspace, work_root)
+        outside_sentinel.unlink(missing_ok=True)
+        outside_target.rmdir()
+
     if Image is not None or py7zr is not None:
         raise RuntimeError("Conversion backends were loaded before first use.")
     load_image_backend()
@@ -2148,12 +2379,11 @@ def run_self_test(folder: Path) -> int:
     original_archive_limit = globals()["MAX_ARCHIVE_FILES"]
     globals()["MAX_ARCHIVE_FILES"] = 3
     try:
-        with tempfile.TemporaryDirectory(
-            prefix="file-converter-entry-limit-",
-            dir=folder,
-        ) as limited_destination:
+        with private_archive_workspace() as entry_limit_work:
+            limited_destination = entry_limit_work / "entry-limit"
+            limited_destination.mkdir()
             try:
-                extract_archive(entry_limit_archive, Path(limited_destination))
+                extract_archive(entry_limit_archive, limited_destination)
             except ValueError as error:
                 if "entries" not in str(error):
                     raise RuntimeError("The extraction entry limit gave an unclear error.") from error
@@ -2370,6 +2600,14 @@ def run_self_test(folder: Path) -> int:
         raise RuntimeError("A partially started conversion worker did not clean up safely.")
     window.close()
     application.processEvents()
+
+    remaining_workspaces = [
+        child.name
+        for child in work_root.iterdir()
+        if is_archive_workspace_name(child.name)
+    ]
+    if remaining_workspaces:
+        raise RuntimeError("An archive conversion left private working files behind.")
 
     (folder / "self-test-passed.txt").write_text(
         "File Converter self-test passed.\n",
@@ -3719,6 +3957,14 @@ if __name__ == "__main__":
             "Let Installer.bat finish, then open the app again."
         )
         raise SystemExit(1)
+    try:
+        cleanup_stale_archive_workspaces()
+    except (OSError, RuntimeError) as error:
+        show_native_setup_error(
+            "The private archive work folder is unsafe or unavailable.\n\n"
+            "Run Installer.bat to repair File Converter, then open it again."
+        )
+        raise SystemExit(1) from error
 
     sys.excepthook = handle_unhandled_exception
     threading.excepthook = handle_unhandled_thread_exception

@@ -23,13 +23,13 @@ USE
 
 SETUP DETAILS
 
-Setup keeps official Python 3.14.7, PySide6-Essentials, Pillow, pillow-heif, py7zr, FFmpeg, FFprobe, settings, and app-specific files private to this folder. It does not require administrator access, change PATH, or install global Python packages. Downloaded runtime archives are verified before use.
+Setup keeps official Python 3.14.7, the complete pinned PySide6-Essentials, Pillow, pillow-heif, and py7zr dependency set, FFmpeg, FFprobe, settings, and app-specific files private to this folder. It does not require administrator access, change PATH, or install global Python packages. Downloaded runtime archives are verified before use.
 
 Setup creates and validates a folder-local File Converter shortcut that starts the app directly with this folder's private runtime. Run Installer.bat again to repair setup or after moving the complete folder. Your files are never changed by setup.
 
 PRIVACY AND REMOVAL
 
-The app has no telemetry, analytics, advertisements, accounts, uploads, or runtime network requests. Files are processed locally. Review setup.log before sharing because it can contain local folder paths.
+The app has no telemetry, analytics, advertisements, accounts, uploads, or runtime network requests. Files are processed locally. Temporary archive staging stays in .runtime\work inside the extracted folder and is removed after each job; a later startup safely retries cleanup after an interrupted job. Review setup.log before sharing because it can contain local folder paths.
 
 To remove this tool, close it and delete the extracted folder. This removes its folder-local shortcut, private runtime, dependencies, settings, and app files.
 

@@ -83,7 +83,16 @@ set "PYSIDE_DISTRIBUTION=PySide6-Essentials"
 set "PILLOW_VERSION=12.3.0"
 set "PILLOW_HEIF_VERSION=1.7.0"
 set "PY7ZR_VERSION=1.1.3"
-set "PYTHON_PACKAGES=%PYSIDE_DISTRIBUTION%==%PYSIDE_VERSION% Pillow==%PILLOW_VERSION% pillow-heif==%PILLOW_HEIF_VERSION% py7zr==%PY7ZR_VERSION%"
+set "BROTLI_VERSION=1.2.0"
+set "INFLATE64_VERSION=1.0.4"
+set "MULTIVOLUMEFILE_VERSION=0.2.3"
+set "PSUTIL_VERSION=7.2.2"
+set "PYBCJ_VERSION=1.0.8"
+set "PYCRYPTODOMEX_VERSION=3.23.0"
+set "PYPPMD_VERSION=1.3.1"
+set "SHIBOKEN_VERSION=6.11.2"
+set "TEXTTABLE_VERSION=1.7.0"
+set "PYTHON_PACKAGES=%PYSIDE_DISTRIBUTION%==%PYSIDE_VERSION% shiboken6==%SHIBOKEN_VERSION% Pillow==%PILLOW_VERSION% pillow-heif==%PILLOW_HEIF_VERSION% py7zr==%PY7ZR_VERSION% texttable==%TEXTTABLE_VERSION% pycryptodomex==%PYCRYPTODOMEX_VERSION% brotli==%BROTLI_VERSION% psutil==%PSUTIL_VERSION% pyppmd==%PYPPMD_VERSION% pybcj==%PYBCJ_VERSION% multivolumefile==%MULTIVOLUMEFILE_VERSION% inflate64==%INFLATE64_VERSION%"
 set "PYPI_INDEX=https://pypi.org/simple"
 set "PIP_WHEEL_URL=https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/pip-26.2.1-py3-none-any.whl"
 set "PIP_WHEEL_SHA256=71138ADF1F4CA900CDB7D289C21B7494329F2332B6D85F0E1C42108C0384ED3E"
@@ -618,7 +627,7 @@ exit /b %ERRORLEVEL%
 :VerifyPythonPackages
 if not defined APP_PY exit /b 1
 if not exist "%APP_PY%" exit /b 1
-"%APP_PY%" -I -c "import PIL, PySide6, pillow_heif, py7zr; from PIL import Image, features; from importlib.metadata import version; from PySide6.QtCore import qVersion; pillow_heif.register_heif_opener(); assert version('%PYSIDE_DISTRIBUTION%') == '%PYSIDE_VERSION%'; assert version('Pillow') == '%PILLOW_VERSION%'; assert version('pillow-heif') == '%PILLOW_HEIF_VERSION%'; assert version('py7zr') == '%PY7ZR_VERSION%'; assert features.check('webp'); assert features.check('avif'); assert Image.registered_extensions().get('.heic') == 'HEIF'; print('%PYSIDE_DISTRIBUTION%=' + version('%PYSIDE_DISTRIBUTION%')); print('Qt=' + qVersion()); print('Pillow=' + version('Pillow')); print('pillow-heif=' + version('pillow-heif')); print('py7zr=' + version('py7zr')); print('WEBP, AVIF, and HEIC support=available')" >>"%LOG%" 2>&1
+"%APP_PY%" -I -c "import os, re, PIL, PySide6, pillow_heif, py7zr; from PIL import Image, features; from importlib.metadata import distributions; from PySide6.QtCore import qVersion; canonical=lambda value: re.sub(r'[-_.]+','-',value).lower(); expected={canonical(name): package_version for item in os.environ['PYTHON_PACKAGES'].split() for name,package_version in [item.split('==',1)]}; entries=[(canonical(dist.metadata['Name']),dist.version) for dist in distributions() if dist.metadata.get('Name')]; assert len(entries)==len(expected) and dict(entries)==expected; pillow_heif.register_heif_opener(); assert features.check('webp'); assert features.check('avif'); assert Image.registered_extensions().get('.heic') == 'HEIF'; print('Exact private package manifest: ' + ', '.join(name + '=' + expected[name] for name in sorted(expected))); print('Qt=' + qVersion()); print('WEBP, AVIF, and HEIC support=available')" >>"%LOG%" 2>&1
 if errorlevel 1 exit /b 1
 if /I not "%ENV_MODE%"=="embedded" exit /b 1
 "%APP_PY%" -I -c "import sys; sys.path.insert(0, sys.argv[1]); from pip._internal.cli.main import main; raise SystemExit(main(sys.argv[2:]))" "%PIP_WHEEL%" --isolated --disable-pip-version-check check >>"%LOG%" 2>&1
@@ -627,7 +636,7 @@ exit /b %ERRORLEVEL%
 :HasPinnedPackages
 if not defined APP_PY exit /b 1
 if not exist "%APP_PY%" exit /b 1
-"%APP_PY%" -I -c "import PIL, PySide6, pillow_heif, py7zr; from importlib.metadata import version; ok = version('%PYSIDE_DISTRIBUTION%') == '%PYSIDE_VERSION%' and version('Pillow') == '%PILLOW_VERSION%' and version('pillow-heif') == '%PILLOW_HEIF_VERSION%' and version('py7zr') == '%PY7ZR_VERSION%'; raise SystemExit(0 if ok else 1)" >>"%LOG%" 2>&1
+"%APP_PY%" -I -c "import os, re, PIL, PySide6, pillow_heif, py7zr; from importlib.metadata import distributions; canonical=lambda value: re.sub(r'[-_.]+','-',value).lower(); expected={canonical(name): package_version for item in os.environ['PYTHON_PACKAGES'].split() for name,package_version in [item.split('==',1)]}; entries=[(canonical(dist.metadata['Name']),dist.version) for dist in distributions() if dist.metadata.get('Name')]; ok=len(entries)==len(expected) and dict(entries)==expected; raise SystemExit(0 if ok else 1)" >>"%LOG%" 2>&1
 exit /b %ERRORLEVEL%
 
 :ResetEmbeddedPackages
