@@ -37,7 +37,7 @@ EMBEDDED_PYW = RUNTIME_DIR / "python" / "pythonw.exe"
 SETUP_LOCK_DIR = RUNTIME_DIR / "setup.lock"
 ERROR_LOG_PATH = RUNTIME_DIR / "error.log"
 APP_TITLE = "File Converter"
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.9"
 APP_MUTEX_NAMES = (
     r"Global\FleeceFileConverterApp",
     r"Local\FleeceFileConverterApp",
@@ -1781,7 +1781,7 @@ def convert_file(
 
 
 def run_self_test(folder: Path) -> int:
-    assert APP_VERSION == "1.0.8"
+    assert APP_VERSION == "1.0.9"
     folder.mkdir(parents=True, exist_ok=True)
     if Image is not None or py7zr is not None:
         raise RuntimeError("Conversion backends were loaded before first use.")
