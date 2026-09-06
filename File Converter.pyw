@@ -29,15 +29,12 @@ from typing import Callable, Optional
 
 APP_DIR = Path(__file__).resolve().parent
 RUNTIME_DIR = APP_DIR / ".runtime"
-VENV_ROOT = APP_DIR / ".venv"
-VENV_PY = VENV_ROOT / "Scripts" / "python.exe"
-VENV_PYW = VENV_ROOT / "Scripts" / "pythonw.exe"
 EMBEDDED_PY = RUNTIME_DIR / "python" / "python.exe"
 EMBEDDED_PYW = RUNTIME_DIR / "python" / "pythonw.exe"
 SETUP_LOCK_DIR = RUNTIME_DIR / "setup.lock"
 ERROR_LOG_PATH = RUNTIME_DIR / "error.log"
 APP_TITLE = "File Converter"
-APP_VERSION = "1.0.9"
+APP_VERSION = "1.0.10"
 APP_MUTEX_NAMES = (
     r"Global\FleeceFileConverterApp",
     r"Local\FleeceFileConverterApp",
@@ -56,44 +53,37 @@ def show_native_setup_error(message: str):
 
 def bootstrap_local_python():
     current = os.path.normcase(os.path.realpath(sys.executable))
-    for local_python, local_pythonw in (
-        (VENV_PY, VENV_PYW),
-        (EMBEDDED_PY, EMBEDDED_PYW),
-    ):
-        valid_executables = {
-            os.path.normcase(os.path.realpath(path))
-            for path in (local_python, local_pythonw)
-            if path.is_file()
-        }
-        if current in valid_executables and sys.flags.isolated:
-            return
-        if not local_python.is_file() or not local_pythonw.is_file():
-            continue
+    valid_executables = {
+        os.path.normcase(os.path.realpath(path))
+        for path in (EMBEDDED_PY, EMBEDDED_PYW)
+        if path.is_file()
+    }
+    if current in valid_executables and sys.flags.isolated:
+        return
+    if EMBEDDED_PY.is_file() and EMBEDDED_PYW.is_file():
         try:
-            if current not in valid_executables:
-                validation = subprocess.run(
-                    [str(local_python), "-I", "-c", "pass"],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=60,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-                if validation.returncode != 0:
-                    continue
-            subprocess.Popen(
-                [
-                    str(local_pythonw),
-                    "-I",
-                    str(Path(__file__).resolve()),
-                    *sys.argv[1:],
-                ],
-                cwd=str(APP_DIR),
+            validation = subprocess.run(
+                [str(EMBEDDED_PY), "-I", "-c", "pass"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=60,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
+            if validation.returncode == 0:
+                subprocess.Popen(
+                    [
+                        str(EMBEDDED_PYW),
+                        "-I",
+                        str(Path(__file__).resolve()),
+                        *sys.argv[1:],
+                    ],
+                    cwd=str(APP_DIR),
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                raise SystemExit(0)
         except (OSError, subprocess.SubprocessError):
-            continue
-        raise SystemExit(0)
+            pass
 
     show_native_setup_error(
         "Setup is missing, incomplete, or no longer usable.\n\n"
@@ -1781,7 +1771,7 @@ def convert_file(
 
 
 def run_self_test(folder: Path) -> int:
-    assert APP_VERSION == "1.0.9"
+    assert APP_VERSION == "1.0.10"
     folder.mkdir(parents=True, exist_ok=True)
     if Image is not None or py7zr is not None:
         raise RuntimeError("Conversion backends were loaded before first use.")
@@ -2266,6 +2256,15 @@ def run_self_test(folder: Path) -> int:
         window.category_dropdown.popup.hide()
         window.category_dropdown._closing = False
         application.removeEventFilter(window.category_dropdown)
+    missing_output_folder = folder / f"missing-output-{uuid.uuid4().hex}"
+    window.output_file = None
+    window.output_folder = missing_output_folder
+    window.open_output_folder()
+    if (
+        window.status_label.text() != "Output folder unavailable"
+        or "no longer available" not in window.log_box.toPlainText()
+    ):
+        raise RuntimeError("A missing output folder did not produce useful feedback.")
     window.set_source_file(source_png)
     worker_start_folder = folder / f"worker-start-{uuid.uuid4().hex}"
     window.output_folder = worker_start_folder
@@ -3634,7 +3633,21 @@ class FileConverter(QMainWindow):
             if self.output_file is not None
             else self.output_folder
         )
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+        try:
+            available = folder.is_dir()
+        except OSError:
+            available = False
+        if not available:
+            self.status_label.setText("Output folder unavailable")
+            self.append_log(
+                "The output folder is no longer available. Choose another output folder."
+            )
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
+            self.status_label.setText("Could not open output folder")
+            self.append_log(
+                "Windows could not open the output folder. The converted file was not changed."
+            )
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         urls = event.mimeData().urls()
