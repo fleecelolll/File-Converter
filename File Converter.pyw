@@ -36,7 +36,7 @@ ERROR_LOG_PATH = RUNTIME_DIR / "error.log"
 ARCHIVE_WORK_ROOT = RUNTIME_DIR / "work"
 ARCHIVE_WORK_PREFIX = "archive-"
 APP_TITLE = "File Converter"
-APP_VERSION = "1.0.10"
+APP_VERSION = "1.0.11"
 APP_MUTEX_NAMES = (
     r"Global\FleeceFileConverterApp",
     r"Local\FleeceFileConverterApp",
@@ -1940,7 +1940,7 @@ def convert_file(
 
 
 def run_self_test(folder: Path) -> int:
-    assert APP_VERSION == "1.0.10"
+    assert APP_VERSION == "1.0.11"
     folder.mkdir(parents=True, exist_ok=True)
     if verify_private_package_manifest() != EXPECTED_PRIVATE_PACKAGES:
         raise RuntimeError("The private package manifest check did not finish.")
