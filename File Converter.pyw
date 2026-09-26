@@ -36,7 +36,7 @@ ERROR_LOG_PATH = RUNTIME_DIR / "error.log"
 ARCHIVE_WORK_ROOT = RUNTIME_DIR / "work"
 ARCHIVE_WORK_PREFIX = "archive-"
 APP_TITLE = "File Converter"
-APP_VERSION = "1.0.11"
+APP_VERSION = "1.0.12"
 APP_MUTEX_NAMES = (
     r"Global\FleeceFileConverterApp",
     r"Local\FleeceFileConverterApp",
@@ -49,7 +49,7 @@ EXPECTED_PRIVATE_PACKAGES = {
     "inflate64": "1.0.4",
     "multivolumefile": "0.2.3",
     "pillow": "12.3.0",
-    "pillow-heif": "1.7.0",
+    "pillow-heif": "1.8.0",
     "psutil": "7.2.2",
     "py7zr": "1.1.3",
     "pybcj": "1.0.8",
@@ -1940,7 +1940,7 @@ def convert_file(
 
 
 def run_self_test(folder: Path) -> int:
-    assert APP_VERSION == "1.0.11"
+    assert APP_VERSION == "1.0.12"
     folder.mkdir(parents=True, exist_ok=True)
     if verify_private_package_manifest() != EXPECTED_PRIVATE_PACKAGES:
         raise RuntimeError("The private package manifest check did not finish.")
