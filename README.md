@@ -41,6 +41,8 @@ Setup keeps the private Python runtime, dependencies, settings, and every app co
 
 Setup pins and verifies official Python 3.14.7, pip, the complete private PySide6-Essentials, Pillow, pillow-heif, and py7zr dependency set, FFmpeg, and FFprobe. Downloaded runtime archives are checked against pinned SHA-256 hashes before use.
 
+Before downloading private components, setup checks the bundled app source and Windows shortcut support. Once private Python is ready, it compiles the app before installing the larger packages. WinGet is not required.
+
 Run `Installer.bat` again to repair the private components or after moving the complete folder. Setup preserves your files and recreates the shortcut for the folder's current location.
 
 ## usage
@@ -70,7 +72,7 @@ To remove File Converter, close it and delete the extracted folder. This removes
 
 ## troubleshooting
 
-If setup stops, review `setup.log`, correct the listed problem, and run `Installer.bat` again. Setup reports success only after its dependencies, offline self-tests, and shortcut all pass.
+If setup stops, the window immediately identifies the failed check and shows a short **How to fix** instruction. The same guidance is saved in `setup.log`. Correct the listed problem and run `Installer.bat` again. Setup reports success only after its dependencies, offline self-tests, and shortcut all pass.
 
 If the `File Converter` shortcut does not open, run `Installer.bat` again and keep the complete extracted folder together. Setup recreates and validates the shortcut for the folder's current location.
 
