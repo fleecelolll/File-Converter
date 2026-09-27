@@ -35,13 +35,31 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Build and fresh-extract the exact release ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'File-Converter-v1.0.13.zip'
+          $releaseRoot = Join-Path $env:RUNNER_TEMP 'Fleece File Converter release'
+          & .\scripts\Build-ReleaseZip.ps1 -OutputPath $zip
+          Expand-Archive -LiteralPath $zip -DestinationPath $releaseRoot
+          "RELEASE_ROOT=$releaseRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Verify early failures and repair instructions before downloads
+        if: matrix.runner != 'windows-11-arm'
+        shell: pwsh
+        run: .\.github\scripts\Test-SetupPreflight.ps1 -ReleaseRoot $env:RELEASE_ROOT -AppName 'File Converter'
+
       - name: Verify safe ARM64 unsupported-platform handling
         if: matrix.runner == 'windows-11-arm'
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
+          Push-Location -LiteralPath $env:RELEASE_ROOT
+          try {
           $output = & "$env:SystemRoot\System32\cmd.exe" /d /s /c 'call "Installer.bat" --yes --no-pause' 2>&1
           $exitCode = $LASTEXITCODE
+          } finally { Pop-Location }
           $output | Write-Host
           $text = $output -join "`n"
           if ($exitCode -ne 1) {
@@ -51,7 +69,7 @@ jobs:
             throw 'The ARM64 rejection did not report the exact supported-platform boundary.'
           }
           foreach ($path in @('.runtime', 'File Converter.lnk', 'setup.log')) {
-            if (Test-Path -LiteralPath $path) {
+            if (Test-Path -LiteralPath (Join-Path $env:RELEASE_ROOT $path)) {
               throw "The unsupported-platform check changed local setup state: $path"
             }
           }
@@ -62,12 +80,21 @@ jobs:
       - name: Perform a clean private setup and app self-test through the confirmation prompt
         if: matrix.runner != 'windows-11-arm'
         shell: cmd
-        run: echo Y| call Installer.bat --no-pause
+        run: |
+          cd /d "%RELEASE_ROOT%"
+          echo Y| call Installer.bat --no-pause
 
       - name: Verify the repair path against the installed runtime
         if: matrix.runner != 'windows-11-arm'
         shell: cmd
-        run: Installer.bat --yes --no-pause
+        run: |
+          cd /d "%RELEASE_ROOT%"
+          Installer.bat --yes --no-pause
+
+      - name: Verify the repaired shortcut target and launch contract
+        if: matrix.runner != 'windows-11-arm'
+        shell: pwsh
+        run: .\.github\scripts\Test-Shortcut.ps1 -ReleaseRoot $env:RELEASE_ROOT -AppName 'File Converter'
 
       - name: Upload diagnostics if a gate fails
         if: failure()
@@ -78,6 +105,6 @@ jobs:
           include-hidden-files: true
           retention-days: 7
           path: |
-            setup.log
-            .runtime/error.log
-            .runtime/logs/*.log
+            ${{ runner.temp }}/Fleece File Converter release/setup.log
+            ${{ runner.temp }}/Fleece File Converter release/.runtime/error.log
+            ${{ runner.temp }}/Fleece File Converter release/.runtime/logs/*.log
