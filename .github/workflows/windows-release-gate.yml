@@ -39,7 +39,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $zip = Join-Path $env:RUNNER_TEMP 'File-Converter-v1.0.13.zip'
+          $zip = Join-Path $env:RUNNER_TEMP 'File-Converter-v1.0.14.zip'
           $releaseRoot = Join-Path $env:RUNNER_TEMP 'Fleece File Converter release'
           & .\scripts\Build-ReleaseZip.ps1 -OutputPath $zip
           Expand-Archive -LiteralPath $zip -DestinationPath $releaseRoot
