@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 import threading
+import time
 import traceback
 import uuid
 import warnings
@@ -36,7 +37,7 @@ ERROR_LOG_PATH = RUNTIME_DIR / "error.log"
 ARCHIVE_WORK_ROOT = RUNTIME_DIR / "work"
 ARCHIVE_WORK_PREFIX = "archive-"
 APP_TITLE = "File Converter"
-APP_VERSION = "1.0.14"
+APP_VERSION = "1.0.15"
 APP_MUTEX_NAMES = (
     r"Global\FleeceFileConverterApp",
     r"Local\FleeceFileConverterApp",
@@ -136,6 +137,7 @@ try:
         QMouseEvent,
         QPainter,
         QPen,
+        QTextCursor,
     )
     from PySide6.QtWidgets import (
         QApplication,
@@ -423,6 +425,8 @@ MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_ARCHIVE_EXPANDED_BYTES = 4 * 1024 * 1024 * 1024
 MAX_ARCHIVE_FILES = 20000
 MAX_SCRIPT_BYTES = 64 * 1024 * 1024
+LOG_DOCUMENT_MAX_BLOCKS = 300
+LOG_MESSAGE_MAX_CHARS = 12000
 FFMPEG_PATH = APP_DIR / ".runtime" / "ffmpeg" / "ffmpeg.exe"
 FFPROBE_PATH = APP_DIR / ".runtime" / "ffmpeg" / "ffprobe.exe"
 WINDOWS_RESERVED_NAMES = {
@@ -1112,37 +1116,83 @@ def stream_copy_arguments(target_label: str, information: dict):
     return arguments
 
 
-def probe_media(path: Path, ffprobe_path: Path):
-    result = subprocess.run(
-        [
-            str(ffprobe_path),
-            "-v",
-            "error",
-            "-protocol_whitelist",
-            "file,crypto,data",
-            "-show_entries",
-            "format=duration,format_name:stream=codec_type,codec_name",
-            "-of",
-            "json",
-            str(path),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "FFprobe could not read the file.")
+def probe_media(
+    path: Path,
+    ffprobe_path: Path,
+    cancel_event: Optional[threading.Event] = None,
+    process_controller=None,
+):
+    check_cancel(cancel_event)
+    command = [
+        str(ffprobe_path),
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file,crypto,data",
+        "-show_entries",
+        "format=duration,format_name:stream=codec_type,codec_name",
+        "-of",
+        "json",
+        str(path),
+    ]
+    process = None
     try:
-        return json.loads(result.stdout)
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if process_controller is not None:
+            process_controller.set_process(process)
+        deadline = time.monotonic() + 30
+        while True:
+            check_cancel(cancel_event)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("FFprobe timed out while reading the file.")
+            try:
+                stdout, stderr = process.communicate(timeout=min(0.1, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        check_cancel(cancel_event)
+        if process.returncode != 0:
+            raise RuntimeError(stderr.strip() or "FFprobe could not read the file.")
+    finally:
+        if process_controller is not None:
+            try:
+                process_controller.clear_process(process)
+            except Exception:
+                pass
+        if process is not None:
+            terminate_subprocess_safely(process)
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+    try:
+        return json.loads(stdout)
     except json.JSONDecodeError as error:
         raise RuntimeError("FFprobe returned invalid file information.") from error
 
 
-def validate_media_output(path: Path, target_kind: str, ffprobe_path: Path):
+def validate_media_output(
+    path: Path,
+    target_kind: str,
+    ffprobe_path: Path,
+    cancel_event: Optional[threading.Event] = None,
+    process_controller=None,
+):
     if not path.is_file() or path.stat().st_size == 0:
         raise RuntimeError("The converted media file was not created.")
-    information = probe_media(path, ffprobe_path)
+    information = probe_media(path, ffprobe_path, cancel_event, process_controller)
     stream_types = {
         stream.get("codec_type") for stream in information.get("streams", [])
     }
@@ -1172,7 +1222,7 @@ def convert_media(
     if output.suffix.lower() != output_extension:
         raise ValueError("The output extension does not match the selected format.")
 
-    information = probe_media(source, FFPROBE_PATH)
+    information = probe_media(source, FFPROBE_PATH, cancel_event, process_controller)
     copy_arguments = stream_copy_arguments(target_label, information)
     try:
         duration = float(information.get("format", {}).get("duration", 0) or 0)
@@ -1246,7 +1296,7 @@ def convert_media(
             details = "\n".join(recent_output).strip()
             raise RuntimeError(details or f"FFmpeg exited with code {return_code}.")
 
-        validate_media_output(temporary, target_kind, FFPROBE_PATH)
+        validate_media_output(temporary, target_kind, FFPROBE_PATH, cancel_event, process_controller)
         check_cancel(cancel_event)
         os.replace(temporary, output)
         if progress_callback is not None:
@@ -1940,7 +1990,7 @@ def convert_file(
 
 
 def run_self_test(folder: Path) -> int:
-    assert APP_VERSION == "1.0.14"
+    assert APP_VERSION == "1.0.15"
     folder.mkdir(parents=True, exist_ok=True)
     if verify_private_package_manifest() != EXPECTED_PRIVATE_PACKAGES:
         raise RuntimeError("The private package manifest check did not finish.")
@@ -2940,8 +2990,18 @@ class ConversionWorker(QObject):
         with self.process_lock:
             self.process = process
             should_cancel = self.cancel_event.is_set()
-        if should_cancel and process.poll() is None:
-            process.kill()
+        if should_cancel:
+            self.kill_process_if_running(process)
+
+    @staticmethod
+    def kill_process_if_running(process):
+        try:
+            if process is not None and process.poll() is None:
+                process.kill()
+        except OSError:
+            # Cancellation can race with a process exiting; the worker still
+            # observes the event and performs its normal final cleanup.
+            pass
 
     def clear_process(self, process):
         with self.process_lock:
@@ -2952,8 +3012,7 @@ class ConversionWorker(QObject):
         self.cancel_event.set()
         with self.process_lock:
             process = self.process
-        if process is not None and process.poll() is None:
-            process.kill()
+        self.kill_process_if_running(process)
 
     def report_progress(self, value: int):
         self.progress.emit(max(0, min(100, int(value))))
@@ -3545,21 +3604,27 @@ class FileConverter(QMainWindow):
                 self.set_archive_sources([Path(folder)])
 
     def set_source_file(self, path: Path):
+        if self.running:
+            return
         try:
-            path = path.expanduser().resolve()
-        except OSError as error:
+            path = path.expanduser().resolve(strict=True)
+            path_is_file = path.is_file()
+        except (OSError, RuntimeError, ValueError) as error:
+            self.clear_source_selection()
             self.status_label.setText("Invalid file")
             self.append_log(f"Could not read that path: {error}")
             return
 
         extension = extension_for_path(path)
-        if not path.is_file() or extension not in SUPPORTED_EXTENSIONS:
+        if not path_is_file or extension not in SUPPORTED_EXTENSIONS:
+            self.clear_source_selection()
             self.status_label.setText("Choose a supported file")
             self.append_log("Choose a supported file type.")
             return
 
         category = category_for_extension(extension)
         if category is None:
+            self.clear_source_selection()
             self.status_label.setText("Choose a supported file")
             return
         self.category_dropdown.select(category)
@@ -3576,7 +3641,18 @@ class FileConverter(QMainWindow):
         self.status_label.setText("Ready")
         self.append_log(f"Selected: {path.name}")
 
+    def clear_source_selection(self):
+        self.source_file = None
+        self.archive_sources = []
+        self.output_file = None
+        self.file_path_label.setText("Choose a file or drag it here")
+        self.file_path_label.setToolTip("")
+        self.open_folder_button.setEnabled(False)
+        self.update_format_options()
+
     def set_archive_sources(self, paths):
+        if self.running:
+            return
         selected = []
         names = set()
         try:
@@ -3592,7 +3668,8 @@ class FileConverter(QMainWindow):
                     raise ValueError("Selected items must have unique names.")
                 names.add(name_key)
                 selected.append(resolved)
-        except (OSError, ValueError) as error:
+        except (OSError, RuntimeError, ValueError) as error:
+            self.clear_source_selection()
             self.status_label.setText("Invalid selection")
             self.append_log(str(error))
             return
@@ -3858,10 +3935,19 @@ class FileConverter(QMainWindow):
 
     def append_log(self, message: str):
         message = str(message).strip()
+        if len(message) > LOG_MESSAGE_MAX_CHARS:
+            removed = len(message) - 11000
+            message = message[:7000] + f"\n[... {removed:,} characters truncated ...]\n" + message[-4000:]
         if not message or message == self.last_log_message:
             return
         self.last_log_message = message
-        self.log_box.append(message)
+        self.log_box.document().setMaximumBlockCount(LOG_DOCUMENT_MAX_BLOCKS)
+        cursor = self.log_box.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        if not self.log_box.document().isEmpty():
+            cursor.insertBlock()
+        cursor.insertText(message)
+        self.log_box.setTextCursor(cursor)
         scrollbar = self.log_box.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
@@ -3888,6 +3974,9 @@ class FileConverter(QMainWindow):
             )
 
     def dragEnterEvent(self, event: QDragEnterEvent):
+        if self.running:
+            event.ignore()
+            return
         urls = event.mimeData().urls()
         if urls and all(url.isLocalFile() for url in urls):
             paths = [Path(url.toLocalFile()) for url in urls]
@@ -3903,6 +3992,9 @@ class FileConverter(QMainWindow):
         event.ignore()
 
     def dropEvent(self, event: QDropEvent):
+        if self.running:
+            event.ignore()
+            return
         urls = event.mimeData().urls()
         if urls:
             paths = [Path(url.toLocalFile()) for url in urls if url.isLocalFile()]
